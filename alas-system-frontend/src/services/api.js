@@ -2,7 +2,6 @@
  * API服务 - 处理与后端的通信
  */
 
-// 后端API基础URL
 const API_BASE_URL = 'http://localhost:8000';
 
 /**
@@ -13,32 +12,31 @@ const API_BASE_URL = 'http://localhost:8000';
  */
 export async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
-  
+
   // 默认请求头
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers
   };
-  
-  // 如果存在令牌，添加到请求头
-  const token = localStorage.getItem('token');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  
-  // 合并选项
+
+  // 如果你用 Cookie 存token，下面这段可以去掉，避免重复认证
+  // const token = localStorage.getItem('token');
+  // if (token && !options.credentials) {
+  //   headers['Authorization'] = `Bearer ${token}`;
+  // }
+
+  // 合并请求配置，确保 credentials 传递给 fetch
   const requestOptions = {
     ...options,
-    headers
+    headers,
+    credentials: options.credentials || 'same-origin'  // 默认同源请求携带cookie，跨域必须传 'include'
   };
-  
+
   try {
     const response = await fetch(url, requestOptions);
-    
-    // 解析响应JSON
+
     const data = await response.json();
-    
-    // 返回状态和数据
+
     return {
       status: response.status,
       data,
@@ -54,67 +52,45 @@ export async function apiRequest(endpoint, options = {}) {
  * 用户API服务
  */
 export const userService = {
-  /**
-   * 用户注册
-   * @param {Object} userData - 用户数据 {email, password}
-   * @returns {Promise} - 返回响应Promise
-   */
   register: (userData) => {
     return apiRequest('/register', {
       method: 'POST',
       body: JSON.stringify(userData)
     });
   },
-  
-  /**
-   * 用户登录
-   * @param {Object} credentials - 登录凭证 {email, password}
-   * @returns {Promise} - 返回响应Promise
-   */
+
   login: (credentials) => {
     return apiRequest('/login', {
       method: 'POST',
-      body: JSON.stringify(credentials)
+      body: JSON.stringify(credentials),
+      credentials: 'include'  // **关键：携带跨域cookie**
     });
   },
-  
-  /**
-   * 购买服务
-   * @param {Object} purchaseData - 购买数据 {days}
-   * @returns {Promise} - 返回响应Promise
-   */
+
   purchase: (purchaseData) => {
     return apiRequest('/purchase', {
       method: 'POST',
-      body: JSON.stringify(purchaseData)
+      body: JSON.stringify(purchaseData),
+      credentials: 'include'  // 需要认证请求也要加
     });
   },
-  
-  /**
-   * 获取购买状态
-   * @returns {Promise} - 返回响应Promise
-   */
+
   getPurchaseStatus: () => {
     return apiRequest('/purchase/status', {
-      method: 'GET'
+      method: 'GET',
+      credentials: 'include'  // 需要认证请求也要加
     });
-  }
-
-//   /**
-//    * 创建容器
-//    * @returns {Promise} - 返回响应Promise
-//    */
-//   createContainer: () => {
-//     return apiRequest('/create_container', {
-//       method: 'POST'
-//     });
-//   }
-// };
-  /**
-   * 获取购买状态
-   * @returns {Promise} - 返回响应Promise
-   */
-
-
-  
-}
+  },
+  authcheck: () => {
+    return apiRequest('/auth/check', {
+      method: "GET",
+      credentials: 'include'  // 需要认证请求也要加
+    });
+  },
+  logout: () => {
+    return apiRequest('/logout', {
+      method: "POST",
+      credentials: 'include'  // 需要认证请求也要加
+    });
+  },
+};

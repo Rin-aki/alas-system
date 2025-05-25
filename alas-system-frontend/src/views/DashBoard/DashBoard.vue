@@ -16,25 +16,10 @@
           <p>剩余天数: {{ purchaseStatus.days_remaining }} 天</p>
         </div>
       </div>
-      
-      <!-- 购买服务表单 -->
-      <div class="purchase-form">
-        <h3>购买服务</h3>
-        <el-form :model="purchaseForm" label-width="100px">
-          <el-form-item label="购买天数">
-            <el-select v-model="purchaseForm.days" placeholder="请选择购买天数">
-              <el-option label="30天" :value="30"></el-option>
-              <el-option label="90天" :value="90"></el-option>
-              <el-option label="180天" :value="180"></el-option>
-              <el-option label="365天" :value="365"></el-option>
-            </el-select>
-          </el-form-item>
-          <el-button type="primary" @click="purchaseService" :loading="loading">购买服务</el-button>
-        </el-form>
-      </div>
-      
-      <div>
+
+      <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
         <el-button type="primary" @click="linkblhx">连接实例</el-button>
+        <el-button type="success" @click="linkalas">连接Alas</el-button>
       </div>
 
       <div class="logout-section">
@@ -76,17 +61,21 @@ export default {
   methods: {
     // 初始化用户信息
     initUser() {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        this.$router.push('/login');
-        return;
-      }
-      
-      this.user.email = localStorage.getItem('email') || '未知邮箱';
-      this.user.id = localStorage.getItem('user_id') || '未知ID';
-      this.user.blhx_port = localStorage.getItem('blhx_port') || '未知碧蓝航线端口';
-      this.user.device_ip = localStorage.getItem('device_ip') || '未知设备IP';
-      this.user.alas_port = localStorage.getItem('alas_port') || '未知alas端口';
+      userService.authcheck()
+        .then(response => {
+          if (response.ok) {
+            this.user.email = localStorage.getItem('email') || '未知邮箱';
+            this.user.id = localStorage.getItem('user_id') || '未知ID';
+            this.user.blhx_port = localStorage.getItem('blhx_port') || '未知碧蓝航线端口';
+            this.user.device_ip = localStorage.getItem('device_ip') || '未知设备IP';
+            this.user.alas_port = localStorage.getItem('alas_port') || '未知alas端口';
+          } else {
+            this.$router.push('/login');
+          }
+        })
+        .catch(() => {
+          this.$router.push('/login');
+        });
     },
     
     // 获取购买状态
@@ -113,78 +102,51 @@ export default {
         });
     },
     
-    // 购买服务
-    purchaseService() {
-      this.loading = true;
-      
-      userService.purchase({ days: this.purchaseForm.days })
-        .then(response => {
-          if (response.ok) {
-            this.$message.success('购买成功');
-            this.getPurchaseStatus();
-          } else {
-            this.$message.error(response.data.error || '购买失败');
-          }
-        })
-        .catch(error => {
-          console.error('购买服务错误:', error);
-          this.$message.error('网络错误，请稍后重试');
-        })
-        .finally(() => {
-          this.loading = false;
-        });
-    },
-    
     // 格式化日期
     formatDate(dateString) {
       if (!dateString) return '无';
       const date = new Date(dateString);
       return date.toLocaleString();
     },
-  
-    // createContainer() {
-    //   if (!this.purchaseStatus.has_purchased) {
-    //     this.$message.warning('您尚未购买服务，无法创建容器');
-    //     return;
-    //   }
-
-    //   this.loading = true;
-    //   userService.createContainer()
-    //     .then(response => {
-    //       if (response.ok) {
-    //         this.$message.success('容器创建成功');
-    //       } else {
-    //         this.$message.error(response.data.error || '容器创建失败');
-    //       }
-    //     })
-    //     .catch(error => {
-    //       console.error('创建容器错误:', error);
-    //       this.$message.error('网络错误，请稍后重试');
-    //     })
-    //     .finally(() => {
-    //       this.loading = false;
-    //     });
-    // },
     // 连接实例
     linkblhx() {
       if (!this.purchaseStatus.has_purchased) {
-        this.$message.warning('您尚未购买服务，无法连接实例');
-        return;
-      }
-      this.loading = true;
-      const baseUrl = 'https://scrcpy.gjiang.xyz:4443/'; // 外部网页的基础 URL
-      // const params = new URLSearchParams({
-      //   uid: this.user.device_ip+this.user.blhx_port,
-      //   email: this.user.email
-      // }).toString(); // 创建 URL 查询参数字符串
+          this.$message.warning('您尚未购买服务，无法连接实例');
+          return;
+        }
+        this.loading = true;
 
-      // const url = `${baseUrl}?${params}`; // 拼接完整的 URL
-      const url = `${baseUrl}`; // 拼接完整的 URL
-      window.location.href = url; // 跳转到外部网页
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.$message.error('用户ID未找到，无法跳转');
+          this.loading = false;
+          return;
+        }
+
+      const url = `https://${userId}.scrcpy.gjiang.xyz:4443/`;
+      window.location.href = url; // 跳转到动态子域名的外部网页
     },
+    linkalas() {
+      if (!this.purchaseStatus.has_purchased) {
+          this.$message.warning('您尚未购买服务，无法连接实例');
+          return;
+        }
+        this.loading = true;
+
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.$message.error('用户ID未找到，无法跳转');
+          this.loading = false;
+          return;
+        }
+
+      const url = `https://${userId}.alas.gjiang.xyz:4443/`;
+      window.location.href = url; // 跳转到动态子域名的外部网页
+    },
+
     // 登出
     logout() {
-      localStorage.removeItem('token');
+      userService.logout();
       localStorage.removeItem('user_id');
       localStorage.removeItem('email');
       this.$message.success('已成功登出');

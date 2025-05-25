@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks,WebSocket,Request,HTTPException
 from urllib.parse import urlencode
-from fastapi.responses import Response
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import Response,JSONResponse
+from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Cookie
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -32,7 +33,7 @@ app = FastAPI(title="用户认证系统", version="1.0.0")
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -117,15 +118,18 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+async def get_current_user(access_token: str = Cookie(None), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=401,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    if access_token is None:
+        raise credentials_exception
+
     try:
-        token = credentials.credentials
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
@@ -319,10 +323,8 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
     )
     
     print(f"用户登录: {user.email}, ID: {user.id}, 已购买: {user.has_purchased}, 过期时间: {user.purchase_expires}")
-    
-    return {
+    response = JSONResponse(content={
         "msg": "登录成功",
-        "access_token": access_token,
         "token_type": "bearer",
         "user_id": user.id,
         "device_ip": "192.168.1.169",
@@ -332,7 +334,17 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         "has_purchased": user.has_purchased,
         "purchase_expires": user.purchase_expires.isoformat() if user.purchase_expires else None,
         "purchase_expired": purchase_expired
-    }
+    })
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="Lax",  # 跨域安全策略
+        secure=False  # 生产环境需为 True (HTTPS)
+    )
+    return response
 
 @app.post("/purchase")
 async def purchase(purchase_data: PurchaseRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -357,6 +369,31 @@ async def purchase(purchase_data: PurchaseRequest, current_user: User = Depends(
         "purchase_expires": current_user.purchase_expires.isoformat(),
         "days_remaining": days_remaining
     }
+
+@app.get("/auth/check")
+async def auth_check(request: Request):
+    token = request.cookies.get("access_token")
+    if not token:
+        return JSONResponse(content={"is_authenticated": False})
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise JWTError("Missing user ID")
+        return JSONResponse(content={
+            "is_authenticated": True,
+            "user_id": user_id,
+            "expires_at": payload.get("exp")
+        })
+    
+    except JWTError:
+        return JSONResponse(content={"is_authenticated": False})
+
+@app.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(key="access_token", path="/")
+    return {"msg": "已登出"}
 
 @app.get("/purchase/status")
 async def purchase_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -514,6 +551,24 @@ async def proxy_http(path: str, request: Request, db: Session = Depends(get_db))
             user_id = int(parts[0])
         except ValueError:
             raise HTTPException(status_code=400, detail="无效的用户 ID")
+
+        # 从cookie获取token
+        token = request.cookies.get("access_token")
+        if not token:
+            raise HTTPException(status_code=401, detail="缺少访问令牌")
+
+        # 验证token
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id_from_token = payload.get("sub")
+            if user_id_from_token is None:
+                raise HTTPException(status_code=401, detail="无效的访问令牌")
+        except JWTError:
+            raise HTTPException(status_code=401, detail="访问令牌验证失败")
+
+        # 验证token用户id和子域名用户id匹配
+        if str(user_id_from_token) != str(user_id):
+            raise HTTPException(status_code=403, detail="无权访问此用户资源")
 
         # 异步调用同步 DB 操作，避免阻塞事件循环
         user = await asyncio.to_thread(get_user_sync, db, user_id)

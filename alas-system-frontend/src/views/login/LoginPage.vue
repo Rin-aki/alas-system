@@ -80,7 +80,6 @@ export default {
               this.$message.success(response.data.msg || '登录成功');
               
               // 保存令牌到本地存储
-              localStorage.setItem('token', response.data.access_token);
               localStorage.setItem('user_id', response.data.user_id);
               localStorage.setItem('email', response.data.email);
               localStorage.setItem('ip', response.data.ip);
