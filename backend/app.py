@@ -235,9 +235,11 @@ async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
         query_string = urlencode(query_params)
         if(parts[1] == "scrcpy"):
             print("scrcpy_ws请求：")
+            use_bytes = True
             target_ws_url = f"ws://192.168.1.169:{user.ws_port}/?{query_string}"
         elif(parts[1] == "alas"):
             print("alas_ws请求：")
+            use_bytes = False
             target_ws_url = f"ws://192.168.1.169:{user.alas_port}/?{query_string}"
         else:
             raise HTTPException(status_code=404, detail="请求错误")
@@ -246,24 +248,25 @@ async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
             async def client_to_server():
                 try:
                     while True:
-                        msg = await websocket.receive()
-                        if "text" in msg:
-                            await remote_ws.send(msg["text"])
-                        elif "bytes" in msg:
-                            await remote_ws.send(msg["bytes"])
-                except Exception:
-                    pass
+                        if use_bytes:
+                            data = await websocket.receive_bytes()
+                            await remote_ws.send(data)
+                        else:
+                            msg = await websocket.receive_text()
+                            await remote_ws.send(msg)
+                except Exception as e:
+                    print(f"[client_to_server] exception: {e}")
 
             async def server_to_client():
                 try:
                     while True:
                         msg = await remote_ws.recv()
-                        if isinstance(msg, str):
-                            await websocket.send_text(msg)
-                        else:
+                        if use_bytes:
                             await websocket.send_bytes(msg)
-                except Exception:
-                    pass
+                        else:
+                            await websocket.send_text(msg)
+                except Exception as e:
+                    print(f"[server_to_client] exception: {e}")
 
             await asyncio.gather(client_to_server(), server_to_client())
 
