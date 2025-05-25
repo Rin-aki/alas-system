@@ -4,7 +4,7 @@ import websockets
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks,WebSocket,Request
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks,WebSocket,Request,HTTPException
 from urllib.parse import urlencode
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -20,6 +20,11 @@ import httpx
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # FastAPI应用实例
 app = FastAPI(title="用户认证系统", version="1.0.0")
@@ -149,7 +154,7 @@ async def send_activation_email(email: str, token: str):
         msg['To'] = email
         msg['Subject'] = '账户激活'
         
-        body = f'您的激活链接：http://localhost:8000/activate/{token}'
+        body = f'您的激活链接：http://alas.gjiang.xyz:4443/activate/{token}'
         msg.attach(MIMEText(body, 'plain'))
         
         server = smtplib.SMTP_SSL(MAIL_CONFIG['MAIL_SERVER'], MAIL_CONFIG['MAIL_PORT'])
@@ -207,39 +212,6 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
         "user_id": new_user.id
     }
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-async def proxy_http(path: str, request: Request, db: Session = Depends(get_db)):
-    parts = request.headers.get("host", "").split(":")[0].split(".")
-    if len(parts) > 2:
-        user_id = int(parts[0])
-    else:
-        raise HTTPException(status_code=404, detail="请求错误")
-
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
-    if(parts[1] == "scrcpy"):
-        target_url = f"http://192.168.1.169:{user.ws_port}/{path}"
-    elif(parts[1] == "alas"):
-        target_url = f"http://192.168.1.169:{user.alas_port}/{path}"
-    else:
-        raise HTTPException(status_code=404, detail="请求错误")
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.request(
-            method=request.method,
-            url=target_url,
-            headers=dict(request.headers),
-            content=await request.body()
-        )
-
-    return Response(
-        content=response.content,
-        status_code=response.status_code,
-        headers=dict(response.headers),
-    )
 
 @app.websocket("/")
 async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
@@ -258,32 +230,40 @@ async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
             closed = True
             await websocket.close()
             return {"msg": "用户不存在"}
-        
+
         query_params = websocket.query_params
         query_string = urlencode(query_params)
         if(parts[1] == "scrcpy"):
-                target_ws_url = f"ws://192.168.1.169:{user.ws_port}/?{query_string}"
+            print("scrcpy_ws请求：")
+            target_ws_url = f"ws://192.168.1.169:{user.ws_port}/?{query_string}"
         elif(parts[1] == "alas"):
+            print("alas_ws请求：")
             target_ws_url = f"ws://192.168.1.169:{user.alas_port}/?{query_string}"
         else:
             raise HTTPException(status_code=404, detail="请求错误")
-        
+
         async with websockets.connect(target_ws_url) as remote_ws:
             async def client_to_server():
                 try:
                     while True:
-                        data = await websocket.receive_bytes()
-                        await remote_ws.send(data)
+                        msg = await websocket.receive()
+                        if "text" in msg:
+                            await remote_ws.send(msg["text"])
+                        elif "bytes" in msg:
+                            await remote_ws.send(msg["bytes"])
                 except Exception:
-                    pass  # 对端关闭或异常
+                    pass
 
             async def server_to_client():
                 try:
                     while True:
-                        data = await remote_ws.recv()
-                        await websocket.send_bytes(data)
+                        msg = await remote_ws.recv()
+                        if isinstance(msg, str):
+                            await websocket.send_text(msg)
+                        else:
+                            await websocket.send_bytes(msg)
                 except Exception:
-                    pass  # 对端关闭或异常
+                    pass
 
             await asyncio.gather(client_to_server(), server_to_client())
 
@@ -448,41 +428,172 @@ async def get_user_info(current_user: User = Depends(get_current_user)):
         "purchase_expires": current_user.purchase_expires.isoformat() if current_user.purchase_expires else None
     }
 
-# 注释掉的Docker容器创建功能示例
-# @app.post("/create_container")
-# async def create_container(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-#     try:
-#         # 检查用户是否已购买服务
-#         if not current_user.has_purchased or check_purchase_expiration(current_user, db):
-#             raise HTTPException(status_code=403, detail="用户未购买服务，无法创建容器")
-#         
-#         # 使用 httpx 调用 Docker API 示例
-#         async with httpx.AsyncClient() as client:
-#             docker_api_url = "http://localhost:2376/containers/create"
-#             container_config = {
-#                 "Image": "alas:latest",
-#                 "name": f"alas.{current_user.id}",
-#                 "HostConfig": {
-#                     "PortBindings": {
-#                         "80/tcp": [{"HostPort": str(current_user.alas_port)}]
-#                     }
-#                 }
-#             }
-#             response = await client.post(docker_api_url, json=container_config)
-#             
-#             if response.status_code == 201:
-#                 container_data = response.json()
-#                 return {
-#                     "msg": "容器创建成功",
-#                     "container_id": container_data.get("Id"),
-#                     "port": current_user.alas_port
-#                 }
-#             else:
-#                 raise HTTPException(status_code=500, detail="容器创建失败")
-#         
-#     except Exception as e:
-#         print(f"创建容器时出错: {str(e)}")
-#         raise HTTPException(status_code=500, detail="创建容器失败")
+# HTTP客户端配置 - 修改了超时设置
+client = httpx.AsyncClient(
+    timeout=httpx.Timeout(
+        connect=5.0,    # 连接超时
+        read=30.0,      # 读取超时，适应可能的慢响应
+        write=10.0,     # 写入超时
+        pool=10.0       # 连接池超时
+    ),
+    limits=httpx.Limits(
+        max_connections=100, 
+        max_keepalive_connections=20
+    ),
+    follow_redirects=True  # 跟随重定向，处理SPA路由
+)
+
+def get_user_sync(db, user_id: int):
+    return db.query(User).filter(User.id == user_id).first()
+
+# 需要排除的响应头 - 增加了更多头部
+EXCLUDED_RESPONSE_HEADERS = {
+    "content-length",
+    "transfer-encoding",
+    "content-encoding",
+    "connection",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-authorization"
+}
+
+# 需要排除的请求头 - 增加了更多头部
+EXCLUDED_REQUEST_HEADERS = {
+    "host",
+    "connection",
+    "content-length",
+    "upgrade",
+    "proxy-connection"
+}
+
+def prepare_proxy_headers(request: Request) -> dict:
+    """准备代理头信息"""
+    # 过滤原始请求头
+    forward_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in EXCLUDED_REQUEST_HEADERS
+    }
+    
+    # 获取客户端信息
+    client_ip = request.client.host if request.client else "unknown"
+    original_host = request.headers.get("host", "")
+    scheme = request.url.scheme
+    port = request.url.port or (443 if scheme == "https" else 80)
+    
+    # 添加代理头信息
+    forward_headers["X-Forwarded-For"] = request.headers.get("x-forwarded-for", client_ip)
+    forward_headers["X-Forwarded-Host"] = request.headers.get("x-forwarded-host", original_host)
+    forward_headers["X-Forwarded-Proto"] = request.headers.get("x-forwarded-proto", scheme)
+    forward_headers["X-Forwarded-Port"] = request.headers.get("x-forwarded-port", str(port))
+    
+    # X-Real 头信息（备用格式）
+    forward_headers["X-Real-IP"] = request.headers.get("x-real-ip", client_ip)
+    forward_headers["X-Real-Proto"] = forward_headers["X-Forwarded-Proto"]
+    
+    # 保存原始Host
+    forward_headers["X-Original-Host"] = original_host
+    
+    return forward_headers
+
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+async def proxy_http(path: str, request: Request, db: Session = Depends(get_db)):
+    try:
+        # 提取子域名中的 user_id
+        host = request.headers.get("host", "")
+        if not host:
+            raise HTTPException(status_code=400, detail="缺少Host头")
+        
+        parts = host.split(":")[0].split(".")
+        if len(parts) <= 2:
+            raise HTTPException(status_code=404, detail="请求错误")
+
+        try:
+            user_id = int(parts[0])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="无效的用户 ID")
+
+        # 异步调用同步 DB 操作，避免阻塞事件循环
+        user = await asyncio.to_thread(get_user_sync, db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        # 确定目标服务地址
+        if parts[1] == "scrcpy":
+            target_url = f"http://192.168.1.169:{user.ws_port}/{path.lstrip('/')}"
+            target_host = f"192.168.1.169:{user.ws_port}"
+        elif parts[1] == "alas":
+            target_url = f"http://192.168.1.169:{user.alas_port}/{path.lstrip('/')}"
+            target_host = f"192.168.1.169:{user.alas_port}"
+        else:
+            raise HTTPException(status_code=404, detail="请求错误")
+
+        logger.info(f"代理请求: {request.method} {request.url} -> {target_url}")
+
+        # 准备代理头信息
+        forward_headers = prepare_proxy_headers(request)
+        
+        # 设置目标服务的Host头（重要！）
+        forward_headers["Host"] = target_host
+
+        # 处理请求体
+        body = None
+        if request.method in ["POST", "PUT", "PATCH"]:
+            body = await request.body()
+
+        # 发起转发请求
+        try:
+            proxied_response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=forward_headers,
+                content=body,
+                params=dict(request.query_params)
+            )
+        except httpx.TimeoutException:
+            logger.error(f"代理超时: {target_url}")
+            raise HTTPException(status_code=504, detail="网关超时")
+        except httpx.ConnectError:
+            logger.error(f"连接失败: {target_url}")
+            raise HTTPException(status_code=502, detail="服务不可用")
+        except httpx.RequestError as e:
+            logger.error(f"代理请求失败 {target_url}: {str(e)}")
+            raise HTTPException(status_code=502, detail="网关错误")
+
+        # 过滤响应头
+        response_headers = {
+            k: v for k, v in proxied_response.headers.items()
+            if k.lower() not in EXCLUDED_RESPONSE_HEADERS
+        }
+
+        # 处理CORS（如果需要）
+        if "access-control-allow-origin" not in [h.lower() for h in response_headers.keys()]:
+            origin = request.headers.get("origin")
+            if origin:
+                response_headers["Access-Control-Allow-Origin"] = origin
+                response_headers["Access-Control-Allow-Credentials"] = "true"
+
+        # 记录响应信息用于调试
+        logger.debug(f"响应状态: {proxied_response.status_code}, Content-Type: {proxied_response.headers.get('content-type', 'unknown')}")
+
+        return Response(
+            content=proxied_response.content,
+            status_code=proxied_response.status_code,
+            headers=response_headers,
+            media_type=proxied_response.headers.get("content-type")
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"代理过程中发生未预期错误: {str(e)}")
+        raise HTTPException(status_code=500, detail="内部服务器错误")
+
+# 应用关闭时清理资源
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理资源"""
+    await client.aclose()
+    logger.info("HTTP客户端已关闭")
 
 if __name__ == "__main__":
     import uvicorn
