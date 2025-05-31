@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: alas-system-frontend/Dockerfile
       args:
-        BACKEND_API_BASE_URL: "http://192.168.8.202:8000"
+        BACKEND_API_BASE_URL: "http://192.168.8.202:8050"
     ports:
       - "4173:4173"
     depends_on:
@@ -17,4 +17,6 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "8050:8000"
+    volumes:
+      - ./backend:/app

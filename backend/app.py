@@ -33,7 +33,7 @@ app = FastAPI(title="用户认证系统", version="1.0.0")
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["https://alasm.gjiang.xyz:4443"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -340,9 +340,10 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         key="access_token",
         value=access_token,
         httponly=True,
+        domain=".gjiang.xyz",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="Lax",  # 跨域安全策略
-        secure=False  # 生产环境需为 True (HTTPS)
+        samesite="none",  # 跨域安全策略
+        secure=True  # 生产环境需为 True (HTTPS)
     )
     return response
 
@@ -392,7 +393,7 @@ async def auth_check(request: Request):
 
 @app.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="access_token", path="/",domain=".gjiang.xyz", samesite="none", secure=True)
     return {"msg": "已登出"}
 
 @app.get("/purchase/status")

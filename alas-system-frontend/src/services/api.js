@@ -2,7 +2,7 @@
  * API服务 - 处理与后端的通信
  */
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'https://api.gjiang.xyz:4443';
 
 /**
  * 发送请求到后端API
