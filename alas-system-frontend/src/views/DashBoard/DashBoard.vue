@@ -20,6 +20,7 @@
       <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
         <el-button type="primary" @click="linkblhx">连接实例</el-button>
         <el-button type="success" @click="linkalas">连接Alas</el-button>
+        <el-button type="danger" @click="fix">疑难修复</el-button>
       </div>
 
       <div class="logout-section">
@@ -123,7 +124,7 @@ export default {
           return;
         }
 
-      const url = `https://${userId}.scrcpy.gjiang.xyz:4443/`;
+      const url = `https://scrcpy.gjiang.xyz:58000/`;
       window.location.href = url; // 跳转到动态子域名的外部网页
     },
     linkalas() {
@@ -140,10 +141,25 @@ export default {
           return;
         }
 
-      const url = `https://${userId}.alas.gjiang.xyz:4443/`;
+      const url = `https://alas.gjiang.xyz:58000/`;
       window.location.href = url; // 跳转到动态子域名的外部网页
     },
+    fix(){
+      if (!this.purchaseStatus.has_purchased) {
+          this.$message.warning('您尚未购买服务，无法进行疑难修复');
+          return;
+        }
+        this.loading = true;
 
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.$message.error('用户ID未找到，无法跳转');
+          this.loading = false;
+          return;
+        }
+
+      this.$router.push('/fix')
+    },
     // 登出
     logout() {
       userService.logout();

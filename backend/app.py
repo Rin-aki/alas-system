@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import random
+import docker
 import websockets
 import asyncio
 from datetime import datetime, timedelta
@@ -26,14 +27,13 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 # FastAPI应用实例
 app = FastAPI(title="用户认证系统", version="1.0.0")
 
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://alasm.gjiang.xyz:4443"],
+    allow_origins=["https://alasm.gjiang.xyz:58000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -41,7 +41,12 @@ app.add_middleware(
 
 # 数据库配置
 DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@192.168.1.169/DataBase"
-engine = create_engine(DATABASE_URL)
+engine = create_engine( DATABASE_URL,
+                        pool_size=20,         # 持久连接数量
+                        max_overflow=30,      # 临时额外连接
+                        pool_timeout=30,      # 等待时间（秒）
+                        pool_recycle=1800     # 每30分钟回收一次连接，避免MySQL断连
+                       )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -108,6 +113,17 @@ def get_db():
     finally:
         db.close()
 
+def restart_container(container_name):
+    client = docker.DockerClient(base_url='tcp://192.168.1.240:2375')
+    container = client.containers.get(container_name)
+    container.restart()
+def exec_container(container_name,command):
+    client = docker.DockerClient(base_url='tcp://192.168.1.240:2375')
+    container = client.containers.get(container_name)
+    exec_res = container.exec_run(command, stdout=True, stderr=True)
+    return exec_res
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -158,7 +174,7 @@ async def send_activation_email(email: str, token: str):
         msg['To'] = email
         msg['Subject'] = '账户激活'
         
-        body = f'您的激活链接：http://alas.gjiang.xyz:4443/activate/{token}'
+        body = f'您的激活链接：http://alas.gjiang.xyz:58000/activate/{token}'
         msg.attach(MIMEText(body, 'plain'))
         
         server = smtplib.SMTP_SSL(MAIL_CONFIG['MAIL_SERVER'], MAIL_CONFIG['MAIL_PORT'])
@@ -190,6 +206,7 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
     # 生成随机端口
     alas_port = random.randint(1024, 65535)
     blhx_port = random.randint(1024, 65535)
+    ws_port = random.randint(1024, 65535)
     
     # 创建新用户
     hashed_password = get_password_hash(user_data.password)
@@ -200,6 +217,7 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
         password_hash=hashed_password,
         alas_port=alas_port,
         blhx_port=blhx_port,
+        ws_port=ws_port,
         activation_token=token,
         token_expires=datetime.utcnow() + timedelta(days=1)
     )
@@ -222,31 +240,52 @@ async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
     await websocket.accept()
     closed = False  # 标记 websocket 是否已关闭
     try:
-        parts = websocket.headers.get("host", "").split(":")[0].split(".")
-        if len(parts) > 2:
-            user_id = int(parts[0])
-        else:
+        # 从 cookie 中获取 access_token（注意：WebSocket headers 中无 cookie 属性，需手动解析）
+        cookie_header = websocket.headers.get("cookie", "")
+        cookies = {kv.split("=")[0]: kv.split("=")[1] for kv in cookie_header.split("; ") if "=" in kv}
+        token = cookies.get("access_token")
+        if not token:
             closed = True
             await websocket.close()
-            return {"msg": "请求错误"}
-        user = db.query(User).filter(User.id == user_id).first()
+            return
+
+        # 解码并验证 token
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id is None:
+                closed = True
+                await websocket.close()
+                return
+        except JWTError:
+            closed = True
+            await websocket.close()
+            return
+
+        # 查询用户
+        user = db.query(User).filter(User.id == int(user_id)).first()
         if not user:
             closed = True
             await websocket.close()
-            return {"msg": "用户不存在"}
+            return
 
+        # 判断服务类型（根据 Host 区分）
+        host = websocket.headers.get("host", "")
         query_params = websocket.query_params
         query_string = urlencode(query_params)
-        if(parts[1] == "scrcpy"):
+
+        if "scrcpy" in host:
             print("scrcpy_ws请求：")
             use_bytes = True
-            target_ws_url = f"ws://192.168.1.169:{user.ws_port}/?{query_string}"
-        elif(parts[1] == "alas"):
+            target_ws_url = f"ws://192.168.1.240:{user.ws_port}/?{query_string}"
+        elif "alas" in host:
             print("alas_ws请求：")
             use_bytes = False
-            target_ws_url = f"ws://192.168.1.169:{user.alas_port}/?{query_string}"
+            target_ws_url = f"ws://192.168.1.240:{user.alas_port}/?{query_string}"
         else:
-            raise HTTPException(status_code=404, detail="请求错误")
+            closed = True
+            await websocket.close()
+            return
 
         async with websockets.connect(target_ws_url) as remote_ws:
             async def client_to_server():
@@ -288,6 +327,65 @@ async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
                 await websocket.close()
             except RuntimeError:
                 pass  # 再次防御性处理
+
+@app.websocket("/fix")
+async def fix(websocket: WebSocket, db: Session = Depends(get_db)):
+    await websocket.accept()
+    try:
+        # 从 cookie 中获取 access_token（注意：WebSocket headers 中无 cookie 属性，需手动解析）
+        cookie_header = websocket.headers.get("cookie", "")
+        cookies = {kv.split("=")[0]: kv.split("=")[1] for kv in cookie_header.split("; ") if "=" in kv}
+        token = cookies.get("access_token")
+        if not token:
+            closed = True
+            await websocket.close()
+            return
+
+        # 解码并验证 token
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id is None:
+                closed = True
+                await websocket.close()
+                return
+        except JWTError:
+            closed = True
+            await websocket.close()
+            return
+
+        # 查询用户
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user:
+            closed = True
+            await websocket.close()
+            return
+        await websocket.send_text(f"正在重启容器 ws-scrcpy...")
+        await websocket.send_text(f"正在重启容器 alas...")
+        await websocket.send_text(f"正在重启容器 碧蓝航线虚拟机...")
+        container_names = ["ws-scrcpy_"+str(user.id), "alas_"+str(user.id), "blhx_"+str(user.id)]
+        for container_name in container_names:
+            try:
+                await asyncio.to_thread(restart_container,container_name)
+                await websocket.send_text(f"容器 {container_name} 重启成功")
+            except docker.errors.NotFound:
+                await websocket.send_text(f"容器 {container_name} 未找到")
+            except docker.errors.APIError as e:
+                await websocket.send_text(f"重启容器 {container_name} 失败: {str(e)}")
+        await websocket.send_text("所有容器重启完成")
+        await asyncio.sleep(3)
+        exec_result = await asyncio.to_thread(exec_container,"ws-scrcpy_"+str(user.id),"adb connect 192.168.1.240:"+str(user.blhx_port))
+        await websocket.send_text(exec_result.output.decode())
+        await websocket.send_text("scrcpy已与碧蓝航线建立连接")
+        await websocket.close()
+
+    except HTTPException:
+        await websocket.close()
+        raise
+    except Exception as e:
+        await websocket.close()
+        logger.error(f"代理过程中发生未预期错误: {str(e)}")
+        raise HTTPException(status_code=500, detail="内部服务器错误")
 
 @app.get("/activate/{token}")
 async def activate(token: str, db: Session = Depends(get_db)):
@@ -539,62 +637,43 @@ def prepare_proxy_headers(request: Request) -> dict:
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_http(path: str, request: Request, db: Session = Depends(get_db)):
     try:
-        # 提取子域名中的 user_id
-        host = request.headers.get("host", "")
-        if not host:
-            raise HTTPException(status_code=400, detail="缺少Host头")
-        
-        parts = host.split(":")[0].split(".")
-        if len(parts) <= 2:
-            raise HTTPException(status_code=404, detail="请求错误")
-
-        try:
-            user_id = int(parts[0])
-        except ValueError:
-            raise HTTPException(status_code=400, detail="无效的用户 ID")
-
-        # 从cookie获取token
+        # 从 Cookie 获取 token
         token = request.cookies.get("access_token")
         if not token:
             raise HTTPException(status_code=401, detail="缺少访问令牌")
 
-        # 验证token
+        # 解码并验证 token
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id_from_token = payload.get("sub")
-            if user_id_from_token is None:
+            user_id = payload.get("sub")
+            if user_id is None:
                 raise HTTPException(status_code=401, detail="无效的访问令牌")
         except JWTError:
             raise HTTPException(status_code=401, detail="访问令牌验证失败")
 
-        # 验证token用户id和子域名用户id匹配
-        if str(user_id_from_token) != str(user_id):
-            raise HTTPException(status_code=403, detail="无权访问此用户资源")
-
-        # 异步调用同步 DB 操作，避免阻塞事件循环
-        user = await asyncio.to_thread(get_user_sync, db, user_id)
+        # 查询用户
+        user = await asyncio.to_thread(get_user_sync, db, int(user_id))
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-
-        # 确定目标服务地址
-        if parts[1] == "scrcpy":
-            target_url = f"http://192.168.1.169:{user.ws_port}/{path.lstrip('/')}"
-            target_host = f"192.168.1.169:{user.ws_port}"
-        elif parts[1] == "alas":
-            target_url = f"http://192.168.1.169:{user.alas_port}/{path.lstrip('/')}"
-            target_host = f"192.168.1.169:{user.alas_port}"
+        
+        host = request.headers.get("host", "")
+        if "scrcpy" in host:
+            target_url = f"http://192.168.1.240:{user.ws_port}/{path}"
+            target_host = f"192.168.1.240:{user.ws_port}"
+            
+        elif "alas" in host:
+            target_url = f"http://192.168.1.240:{user.alas_port}/{path}"
+            target_host = f"192.168.1.240:{user.alas_port}"
         else:
-            raise HTTPException(status_code=404, detail="请求错误")
+            raise HTTPException(status_code=404, detail="未知的服务域名")
 
         logger.info(f"代理请求: {request.method} {request.url} -> {target_url}")
 
-        # 准备代理头信息
+        # 构造请求头
         forward_headers = prepare_proxy_headers(request)
-        
-        # 设置目标服务的Host头（重要！）
         forward_headers["Host"] = target_host
 
-        # 处理请求体
+        # 读取请求体
         body = None
         if request.method in ["POST", "PUT", "PATCH"]:
             body = await request.body()
