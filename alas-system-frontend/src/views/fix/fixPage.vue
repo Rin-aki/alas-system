@@ -1,6 +1,7 @@
 <template>
   <div>
     <h2>修复中...</h2>
+    <h2>请等待自动跳转，不要手动返回！！！</h2>
     <el-input
       v-model="log"
       type="textarea"

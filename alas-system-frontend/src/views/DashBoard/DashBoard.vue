@@ -1,32 +1,30 @@
 <template>
-  <div class="dashboard-container">
-    <el-card class="welcome-card">
-      <h2>欢迎使用系统</h2>
-      <p>您的邮箱: <strong>{{ user.email }}</strong></p>
-      <p>您的用户ID: <strong>{{ user.id }}</strong></p>
+  <div class="glass-panel">
+    <h2>欢迎使用ALAS管理系统</h2>
+    <p>您的邮箱: <strong>{{ user.email }}</strong></p>
+    <p>您的用户ID: <strong>{{ user.id }}</strong></p>
+    
+    <!-- 购买状态信息 -->
+    <div class="purchase-info">
+      <h3>购买状态</h3>
+      <el-tag v-if="purchaseStatus.has_purchased" type="success">已购买</el-tag>
+      <el-tag v-else type="info">未购买</el-tag>
       
-      <!-- 购买状态信息 -->
-      <div class="purchase-info">
-        <h3>购买状态</h3>
-        <el-tag v-if="purchaseStatus.has_purchased" type="success">已购买</el-tag>
-        <el-tag v-else type="info">未购买</el-tag>
-        
-        <div v-if="purchaseStatus.has_purchased" class="purchase-details">
-          <p>过期时间: {{ formatDate(purchaseStatus.purchase_expires) }}</p>
-          <p>剩余天数: {{ purchaseStatus.days_remaining }} 天</p>
-        </div>
+      <div v-if="purchaseStatus.has_purchased" class="purchase-details">
+        <p>过期时间: {{ formatDate(purchaseStatus.purchase_expires) }}</p>
+        <p>剩余天数: {{ purchaseStatus.days_remaining }} 天</p>
       </div>
+    </div>
 
-      <div style="display: flex; align-items: center; justify-content: center; gap: 12px;">
-        <el-button type="primary" @click="linkblhx">连接实例</el-button>
-        <el-button type="success" @click="linkalas">连接Alas</el-button>
-        <el-button type="danger" @click="fix">疑难修复</el-button>
-      </div>
+    <div class="button-group">
+      <el-button type="primary" @click="linkblhx">连接实例</el-button>
+      <el-button type="success" @click="linkalas">连接Alas</el-button>
+      <el-button type="danger" @click="fix">疑难修复</el-button>
+    </div>
 
-      <div class="logout-section">
-        <el-button type="danger" @click="logout">登出</el-button>
-      </div>
-    </el-card>
+    <div class="logout-section">
+      <el-button type="danger" @click="logout">登出</el-button>
+    </div>
   </div>
 </template>
 
@@ -161,52 +159,100 @@ export default {
       this.$router.push('/fix')
     },
     // 登出
-    logout() {
-      userService.logout();
-      localStorage.removeItem('user_id');
-      localStorage.removeItem('email');
-      this.$message.success('已成功登出');
-      this.$router.push('/login');
+    async logout() {
+      try {
+        // 先清理本地存储
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('email');
+        localStorage.removeItem('ip');
+        localStorage.removeItem('blhx_port');
+        localStorage.removeItem('device_ip');
+        localStorage.removeItem('alas_port');
+        
+        // 调用后端登出API并等待完成
+        await userService.logout();
+        
+        this.$message.success('已成功登出');
+        
+        // 使用 replace 而不是 push，避免路由历史问题
+        // 添加一个小延迟确保后端状态更新
+        setTimeout(() => {
+          this.$router.replace('/login');
+        }, 100);
+        
+      } catch (error) {
+        console.error('登出过程中出现错误:', error);
+        // 即使出错也要清理状态并跳转
+        this.$message.success('已成功登出');
+        this.$router.replace('/login');
+      }
     }
   }
 };
 </script>
 
 <style scoped>
-.dashboard-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 80vh;
-  padding: 20px;
+.glass-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  max-height: 80vh;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background-color: rgba(255, 255, 255, 0.2);
+  box-shadow: rgba(0, 0, 0, 0.1) 0px 4px 6px, rgba(0, 0, 0, 0.1) 0px 1px 3px;
+  z-index: 2;
+  padding: 40px;
+  text-align: center;
+  overflow-y: auto;
 }
 
-.welcome-card {
-  width: 600px;
-  text-align: center;
+.glass-panel h2 {
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.glass-panel p {
+  margin: 10px 0;
+  color: #555;
 }
 
 .purchase-info {
   margin: 20px 0;
   padding: 15px;
-  background-color: #f8f9fa;
+  background-color: rgba(248, 249, 250, 0.6);
   border-radius: 5px;
+  backdrop-filter: blur(5px);
+}
+
+.purchase-info h3 {
+  margin-bottom: 10px;
+  color: #333;
 }
 
 .purchase-details {
   margin-top: 10px;
 }
 
-.purchase-form {
+.purchase-details p {
+  margin: 5px 0;
+  color: #555;
+}
+
+.button-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   margin: 20px 0;
-  padding: 15px;
-  background-color: #f0f9eb;
-  border-radius: 5px;
+  flex-wrap: wrap;
 }
 
 .logout-section {
   margin-top: 20px;
   padding-top: 20px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid rgba(238, 238, 238, 0.5);
 }
 </style>

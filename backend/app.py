@@ -40,7 +40,7 @@ app.add_middleware(
 )
 
 # 数据库配置
-DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@192.168.1.169/DataBase"
+DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@MySQL/DataBase"
 engine = create_engine( DATABASE_URL,
                         pool_size=20,         # 持久连接数量
                         max_overflow=30,      # 临时额外连接
@@ -78,8 +78,6 @@ class User(Base):
     email = Column(String(120), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)  # 增加长度以支持pbkdf2
     is_active = Column(Boolean, default=True)
-    activation_token = Column(String(255))
-    token_expires = Column(DateTime)
     has_purchased = Column(Boolean, default=False)
     purchase_expires = Column(DateTime, nullable=True)
     alas_port = Column(Integer, nullable=True)
@@ -114,11 +112,11 @@ def get_db():
         db.close()
 
 def restart_container(container_name):
-    client = docker.DockerClient(base_url='tcp://192.168.1.240:2375')
+    client = docker.DockerClient(base_url='tcp://10.10.10.240:2375')
     container = client.containers.get(container_name)
     container.restart()
 def exec_container(container_name,command):
-    client = docker.DockerClient(base_url='tcp://192.168.1.240:2375')
+    client = docker.DockerClient(base_url='tcp://10.10.10.240:2375')
     container = client.containers.get(container_name)
     exec_res = container.exec_run(command, stdout=True, stderr=True)
     return exec_res
@@ -210,7 +208,6 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
     
     # 创建新用户
     hashed_password = get_password_hash(user_data.password)
-    token = secrets.token_urlsafe(16)
     
     new_user = User(
         email=user_data.email,
@@ -218,8 +215,7 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
         alas_port=alas_port,
         blhx_port=blhx_port,
         ws_port=ws_port,
-        activation_token=token,
-        token_expires=datetime.utcnow() + timedelta(days=1)
+        
     )
     
     db.add(new_user)
@@ -227,10 +223,8 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
     db.refresh(new_user)
     
     # 后台发送激活邮件
-    background_tasks.add_task(send_activation_email, user_data.email, token)
-    
     return {
-        "msg": "注册成功，请查收邮件。由于您的账户已默认激活，您可以直接登录。",
+        "msg": "注册成功",
         "user_id": new_user.id
     }
 
@@ -277,11 +271,11 @@ async def proxy_ws(websocket: WebSocket, db: Session = Depends(get_db)):
         if "scrcpy" in host:
             print("scrcpy_ws请求：")
             use_bytes = True
-            target_ws_url = f"ws://192.168.1.240:{user.ws_port}/?{query_string}"
+            target_ws_url = f"ws://10.10.10.240:{user.ws_port}/?{query_string}"
         elif "alas" in host:
             print("alas_ws请求：")
             use_bytes = False
-            target_ws_url = f"ws://192.168.1.240:{user.alas_port}/?{query_string}"
+            target_ws_url = f"ws://10.10.10.240:{user.alas_port}/?{query_string}"
         else:
             closed = True
             await websocket.close()
@@ -374,7 +368,7 @@ async def fix(websocket: WebSocket, db: Session = Depends(get_db)):
                 await websocket.send_text(f"重启容器 {container_name} 失败: {str(e)}")
         await websocket.send_text("所有容器重启完成")
         await asyncio.sleep(3)
-        exec_result = await asyncio.to_thread(exec_container,"ws-scrcpy_"+str(user.id),"adb connect 192.168.1.240:"+str(user.blhx_port))
+        exec_result = await asyncio.to_thread(exec_container,"ws-scrcpy_"+str(user.id),"adb connect 10.10.10.240:"+str(user.blhx_port))
         await websocket.send_text(exec_result.output.decode())
         await websocket.send_text("scrcpy已与碧蓝航线建立连接")
         await websocket.close()
@@ -386,20 +380,6 @@ async def fix(websocket: WebSocket, db: Session = Depends(get_db)):
         await websocket.close()
         logger.error(f"代理过程中发生未预期错误: {str(e)}")
         raise HTTPException(status_code=500, detail="内部服务器错误")
-
-@app.get("/activate/{token}")
-async def activate(token: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.activation_token == token).first()
-    
-    if not user or user.token_expires < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="激活链接无效或已过期")
-    
-    user.is_active = True
-    user.activation_token = None
-    user.token_expires = None
-    db.commit()
-    
-    return {"msg": "账户激活成功"}
 
 @app.post("/login")
 async def login(user_data: UserLogin, db: Session = Depends(get_db)):
@@ -425,7 +405,7 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         "msg": "登录成功",
         "token_type": "bearer",
         "user_id": user.id,
-        "device_ip": "192.168.1.169",
+        "device_ip": "10.10.10.169",
         "alas_port": user.alas_port,
         "blhx_port": user.blhx_port,
         "email": user.email,
@@ -658,12 +638,12 @@ async def proxy_http(path: str, request: Request, db: Session = Depends(get_db))
         
         host = request.headers.get("host", "")
         if "scrcpy" in host:
-            target_url = f"http://192.168.1.240:{user.ws_port}/{path}"
-            target_host = f"192.168.1.240:{user.ws_port}"
+            target_url = f"http://10.10.10.240:{user.ws_port}/{path}"
+            target_host = f"10.10.10.240:{user.ws_port}"
             
         elif "alas" in host:
-            target_url = f"http://192.168.1.240:{user.alas_port}/{path}"
-            target_host = f"192.168.1.240:{user.alas_port}"
+            target_url = f"http://10.10.10.240:{user.alas_port}/{path}"
+            target_host = f"10.10.10.240:{user.alas_port}"
         else:
             raise HTTPException(status_code=404, detail="未知的服务域名")
 

@@ -1,36 +1,34 @@
 <template>
-  <div>
-    <el-card class="box-card">
-      <h2>登录</h2>
-      <el-form
-        :model="ruleForm"
-        status-icon
-        :rules="rules"
-        ref="ruleForm"
-        label-position="left"
-        label-width="70px"
-        class="login-from"
-      >
-        <el-form-item label="邮箱" prop="email">
-          <el-input v-model="ruleForm.email"></el-input>
-        </el-form-item>
-        <el-form-item label="密码" prop="password">
-          <el-input
-            type="password"
-            v-model="ruleForm.password"
-            autocomplete="off"
-          ></el-input>
-        </el-form-item>
-      </el-form>
-      <div class="btnGroup">
-        <el-button type="primary" @click="submitForm('ruleForm')"
-          >登录</el-button>
-        <el-button @click="resetForm('ruleForm')">重置</el-button>
-        <router-link to="/register">
-          <el-button style="margin-left:10px">注册</el-button>
-        </router-link>
-      </div>
-    </el-card>
+  <div class="glass-panel">
+    <h2>ALAS管理系统</h2>
+    <el-form
+      :model="ruleForm"
+      status-icon
+      :rules="rules"
+      ref="ruleForm"
+      label-position="left"
+      label-width="70px"
+      class="login-from"
+    >
+      <el-form-item label="邮箱" prop="email">
+        <el-input v-model="ruleForm.email"></el-input>
+      </el-form-item>
+      <el-form-item label="密码" prop="password">
+        <el-input
+          type="password"
+          v-model="ruleForm.password"
+          autocomplete="off"
+        ></el-input>
+        <div class="register-link">
+          <router-link to="/register">
+            <span>第一次使用？前往注册</span>
+          </router-link>
+        </div>
+      </el-form-item>
+    </el-form>
+    <div class="btnGroup">
+      <el-button type="primary" @click="submitForm('ruleForm')" style="width: 100%">登录</el-button>
+    </div>
   </div>
 </template>
 
@@ -55,6 +53,7 @@ export default {
       },
     };
   },
+
   methods: {
     submitForm(formName) {
       this.$refs[formName].validate((valid) => {
@@ -106,19 +105,92 @@ export default {
         }
       });
     },
-    resetForm(formName) {
-      this.$refs[formName].resetFields();
-    },
+    goToRegister() {
+      this.$router.push('/register');
+    }
   },
 };
 </script>
 
 <style scoped>
-.box-card {
-  margin: auto auto;
-  width: 400px;
+.glass-panel {
+  position: fixed;
+  top: 0;
+  left: 5%;
+  width: 20%;
+  height: 100vh;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background-color: rgba(255, 255, 255, 0.2);
+  box-shadow: rgba(0, 0, 0, 0.1) 0px 4px 6px, rgba(0, 0, 0, 0.1) 0px 1px 3px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  margin: 0;
 }
+
+/* 手机端适配 */
+@media (max-width: 768px) {
+  .glass-panel {
+    left: 0;
+    width: 100%;
+    padding: 20px;
+  }
+}
+
+/* 平板端适配 */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .glass-panel {
+    left: 2%;
+    width: 40%;
+    padding: 30px;
+  }
+}
+
+.glass-panel h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #333;
+}
+
 .login-from {
-  margin: auto auto;
+  width: 100%;
+  max-width: 400px;
+}
+
+.btnGroup {
+  width: 100%;
+  max-width: 400px;
+  margin-top: 20px;
+}
+
+.register-link {
+  text-align: right;
+  margin-top: 10px; /* 增加与密码框的间距 */
+  width: 100%;
+}
+
+.register-link span {
+  color: #409eff;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.3s;
+}
+
+.register-link span:hover {
+  color: #66b1ff;
+  text-decoration: underline;
+}
+
+/* 手机端注册链接样式调整 */
+@media (max-width: 768px) {
+  .register-link {
+    text-align: center;
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
 }
 </style>
