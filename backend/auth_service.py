@@ -25,7 +25,7 @@ app = FastAPI(title="用户认证系统", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://alasm.gjiang.xyz:58000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -122,23 +122,23 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
-async def send_activation_email(email: str, token: str):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = MAIL_CONFIG['MAIL_USERNAME']
-        msg['To'] = email
-        msg['Subject'] = '账户激活'
-        body = f'您的激活链接：http://alas.gjiang.xyz:58000/activate/{token}'
-        msg.attach(MIMEText(body, 'plain'))
-        server = smtplib.SMTP_SSL(MAIL_CONFIG['MAIL_SERVER'], MAIL_CONFIG['MAIL_PORT'])
-        server.login(MAIL_CONFIG['MAIL_USERNAME'], MAIL_CONFIG['MAIL_PASSWORD'])
-        text = msg.as_string()
-        server.sendmail(MAIL_CONFIG['MAIL_USERNAME'], email, text)
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"邮件发送失败: {e}")
-        return False
+# async def send_activation_email(email: str, token: str):
+#     try:
+#         msg = MIMEMultipart()
+#         msg['From'] = MAIL_CONFIG['MAIL_USERNAME']
+#         msg['To'] = email
+#         msg['Subject'] = '账户激活'
+#         body = f'您的激活链接：http://alas.gjiang.xyz:58000/activate/{token}'
+#         msg.attach(MIMEText(body, 'plain'))
+#         server = smtplib.SMTP_SSL(MAIL_CONFIG['MAIL_SERVER'], MAIL_CONFIG['MAIL_PORT'])
+#         server.login(MAIL_CONFIG['MAIL_USERNAME'], MAIL_CONFIG['MAIL_PASSWORD'])
+#         text = msg.as_string()
+#         server.sendmail(MAIL_CONFIG['MAIL_USERNAME'], email, text)
+#         server.quit()
+#         return True
+#     except Exception as e:
+#         print(f"邮件发送失败: {e}")
+#         return False
 
 def check_purchase_expiration(user: User, db: Session) -> bool:
     if user.has_purchased and user.purchase_expires and user.purchase_expires < datetime.utcnow():

@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY backend/auth_service.py .
+COPY backend/requirements-auth.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install cryptography
+EXPOSE 6200
+CMD ["python", "auth_service.py"]
