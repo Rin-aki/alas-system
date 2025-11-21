@@ -58,9 +58,9 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     has_purchased = Column(Boolean, default=False)
     purchase_expires = Column(DateTime, nullable=True)
-    alas_port = Column(Integer, nullable=True)
-    blhx_port = Column(Integer, nullable=True)
-    ws_port = Column(Integer, nullable=True)
+    alas_ip = Column(Integer, nullable=True)
+    blhx_ip = Column(Integer, nullable=True)
+    ws_ip = Column(Integer, nullable=True)
 
 Base.metadata.create_all(bind=engine)
 
@@ -122,6 +122,39 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+def allocate_unique_ips(db: Session) -> tuple:
+    """
+    从30-99范围内顺序分配3个连续唯一的IP
+    如果有空缺则优先填补空缺
+    """
+    # 获取所有已使用的IP
+    all_users = db.query(User).all()
+    used_ips = set()
+    for user in all_users:
+        if user.alas_ip:
+            used_ips.add(user.alas_ip)
+        if user.blhx_ip:
+            used_ips.add(user.blhx_ip)
+        if user.ws_ip:
+            used_ips.add(user.ws_ip)
+    
+    # IP范围30-99
+    available_ips = []
+    for ip in range(30, 100):
+        if ip not in used_ips:
+            available_ips.append(ip)
+    
+    # 检查是否有足够的IP
+    if len(available_ips) < 3:
+        raise HTTPException(status_code=500, detail="可用IP不足，无法分配")
+    
+    # 分配前3个可用的IP（顺序分配）
+    alas_ip = available_ips[0]
+    blhx_ip = available_ips[1]
+    ws_ip = available_ips[2]
+    
+    return alas_ip, blhx_ip, ws_ip
+
 # async def send_activation_email(email: str, token: str):
 #     try:
 #         msg = MIMEMultipart()
@@ -152,23 +185,32 @@ async def register(user_data: UserRegister, background_tasks: BackgroundTasks, d
     existing_user = db.query(User).filter(User.email == user_data.email).first()
     if existing_user:
         raise HTTPException(status_code=409, detail="该邮箱已被注册")
-    alas_port = random.randint(1024, 65535)
-    blhx_port = random.randint(1024, 65535)
-    ws_port = random.randint(1024, 65535)
+    
+    # 分配唯一的IP（从30-99顺序分配，优先填补空缺）
+    alas_ip, blhx_ip, ws_ip = allocate_unique_ips(db)
+    
     hashed_password = get_password_hash(user_data.password)
     new_user = User(
         email=user_data.email,
         password_hash=hashed_password,
-        alas_port=alas_port,
-        blhx_port=blhx_port,
-        ws_port=ws_port,
+        alas_ip=alas_ip,
+        blhx_ip=blhx_ip,
+        ws_ip=ws_ip,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
+    logger.info(f"新用户注册成功: {user_data.email}, 分配IP: alas={alas_ip}, blhx={blhx_ip}, ws={ws_ip}")
+    
     return {
         "msg": "注册成功",
-        "user_id": new_user.id
+        "user_id": new_user.id,
+        "allocated_ips": {
+            "alas": f"10.10.10.{alas_ip}",
+            "blhx": f"10.10.10.{blhx_ip}",
+            "ws": f"10.10.10.{ws_ip}"
+        }
     }
 
 @app.post("/login")
@@ -187,9 +229,11 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         "msg": "登录成功",
         "token_type": "bearer",
         "user_id": user.id,
-        "device_ip": "10.10.10.169",
-        "alas_port": user.alas_port,
-        "blhx_port": user.blhx_port,
+        "alas_ip": f"10.10.10.{user.alas_ip}" if user.alas_ip else None,
+        "blhx_ip": f"10.10.10.{user.blhx_ip}" if user.blhx_ip else None,
+        "ws_ip": f"10.10.10.{user.ws_ip}" if user.ws_ip else None,
+        "alas_port": 22267,
+        "ws_port": 8000,
         "email": user.email,
         "has_purchased": user.has_purchased,
         "purchase_expires": user.purchase_expires.isoformat() if user.purchase_expires else None,
@@ -273,8 +317,11 @@ async def get_user_info(current_user: User = Depends(get_current_user)):
         "user_id": current_user.id,
         "email": current_user.email,
         "is_active": current_user.is_active,
-        "alas_port": current_user.alas_port,
-        "blhx_port": current_user.blhx_port,
+        "alas_ip": f"10.10.10.{current_user.alas_ip}" if current_user.alas_ip else None,
+        "blhx_ip": f"10.10.10.{current_user.blhx_ip}" if current_user.blhx_ip else None,
+        "ws_ip": f"10.10.10.{current_user.ws_ip}" if current_user.ws_ip else None,
+        "alas_port": 22267,
+        "ws_port": 8000,
         "has_purchased": current_user.has_purchased,
         "purchase_expires": current_user.purchase_expires.isoformat() if current_user.purchase_expires else None
     }

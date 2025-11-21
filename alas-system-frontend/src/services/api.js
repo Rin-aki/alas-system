@@ -93,4 +93,11 @@ export const userService = {
       credentials: 'include'  // 需要认证请求也要加
     });
   },
+  
+  reconnect: () => {
+    return apiRequest('/reconnect', {
+      method: 'POST',
+      credentials: 'include'  // 需要认证请求也要加
+    });
+  }
 };

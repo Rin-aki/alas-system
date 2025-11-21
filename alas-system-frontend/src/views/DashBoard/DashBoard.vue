@@ -19,6 +19,7 @@
     <div class="button-group">
       <el-button type="primary" @click="linkblhx">连接实例</el-button>
       <el-button type="success" @click="linkalas">连接Alas</el-button>
+      <el-button type="warning" @click="reconnect" :loading="reconnecting">重连服务</el-button>
       <el-button type="danger" @click="fix">疑难修复</el-button>
     </div>
 
@@ -50,7 +51,8 @@ export default {
       purchaseForm: {
         days: 30
       },
-      loading: false
+      loading: false,
+      reconnecting: false
     };
   },
   created() {
@@ -157,6 +159,39 @@ export default {
         }
 
       this.$router.push('/fix')
+    },
+    
+    // 重连服务
+    async reconnect() {
+      if (!this.purchaseStatus.has_purchased) {
+        this.$message.warning('您尚未购买服务，无法重连服务');
+        return;
+      }
+      
+      this.reconnecting = true;
+      
+      try {
+        const response = await userService.reconnect();
+        
+        if (response.status === 200 && response.data.success) {
+          this.$message.success(response.data.message || 'WebSocket服务重启成功！');
+        } else if (response.status === 200 && !response.data.success) {
+          this.$message.error(response.data.message || 'WebSocket服务重启失败');
+          if (response.data.error) {
+            console.error('重启错误:', response.data.error);
+          }
+        } else if (response.status === 401) {
+          this.$message.error('登录状态已过期，请重新登录');
+          this.logout();
+        } else {
+          this.$message.error(`重连失败 (状态码: ${response.status})`);
+        }
+      } catch (error) {
+        console.error('重连服务错误:', error);
+        this.$message.error('网络错误，请稍后重试');
+      } finally {
+        this.reconnecting = false;
+      }
     },
     // 登出
     async logout() {
