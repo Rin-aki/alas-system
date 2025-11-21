@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 # 用户认证服务
 import random
+import asyncio
+import websockets
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Response, Cookie
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Response, Cookie, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,6 +52,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
 
+# 服务器SSH配置
+SSH_HOST = "10.10.10."
+SSH_USER = "root"
+SSH_PASSWORD = "your_ssh_password_here"  # 请修改为实际的SSH密码
+
+# 用户缓存，用于减少数据库查询
+user_cache = {}
+
 class User(Base):
     __tablename__ = "user"
     id = Column(Integer, primary_key=True, index=True)
@@ -61,6 +71,7 @@ class User(Base):
     alas_ip = Column(Integer, nullable=True)
     blhx_ip = Column(Integer, nullable=True)
     ws_ip = Column(Integer, nullable=True)
+    server_ip = Column(Integer, nullable=True)
 
 Base.metadata.create_all(bind=engine)
 
@@ -121,6 +132,48 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
+
+async def get_current_user_from_token(access_token: str, db: Session) -> Optional[dict]:
+    """从token获取用户信息，带缓存优化"""
+    if not access_token:
+        return None
+    
+    try:
+        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if not user_id:
+            return None
+            
+        cache_key = f"user_{user_id}"
+        if cache_key in user_cache:
+            cached_user, cache_time = user_cache[cache_key]
+            # 缓存15分钟
+            if (datetime.utcnow() - cache_time).seconds < 900:
+                logger.debug(f"使用缓存的用户信息: {user_id}")
+                return cached_user
+        
+        # 从数据库加载用户信息
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user:
+            user_data = {
+                "id": user.id,
+                "email": user.email,
+                "is_active": user.is_active,
+                "has_purchased": user.has_purchased,
+                "alas_ip": user.alas_ip,
+                "blhx_ip": user.blhx_ip,
+                "ws_ip": user.ws_ip,
+                "server_ip": user.server_ip
+            }
+            user_cache[cache_key] = (user_data, datetime.utcnow())
+            logger.info(f"从数据库加载用户信息并缓存: {user_id}")
+            return user_data
+    except JWTError as e:
+        logger.warning(f"JWT验证失败: {e}")
+    except Exception as e:
+        logger.error(f"获取用户信息时出错: {e}")
+    
+    return None
 
 def allocate_unique_ips(db: Session) -> tuple:
     """
@@ -326,6 +379,210 @@ async def get_user_info(current_user: User = Depends(get_current_user)):
         "purchase_expires": current_user.purchase_expires.isoformat() if current_user.purchase_expires else None
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=6200, log_level="info")
+# ✅ 修复服务WebSocket端点 - 重启Docker容器
+@app.websocket("/fix")
+async def fix_service(websocket: WebSocket, db: Session = Depends(get_db)):
+    """修复用户服务的WebSocket端点 - 重启用户的Docker容器（所有容器在10.10.10.227上）"""
+    await websocket.accept()
+    
+    try:
+        # 🔥 第一步：验证用户身份（使用缓存，快速验证）
+        cookie_header = websocket.headers.get("cookie", "")
+        cookies = {kv.split("=")[0]: kv.split("=")[1] for kv in cookie_header.split("; ") if "=" in kv}
+        token = cookies.get("access_token")
+        
+        if not token:
+            await websocket.send_text("❌ 认证失败：缺少访问令牌")
+            await websocket.close()
+            return
+        
+        # 使用缓存获取用户信息，避免长时间持有数据库连接
+        user_data = await get_current_user_from_token(token, db)
+        if not user_data:
+            await websocket.send_text("❌ 认证失败：无效的访问令牌")
+            await websocket.close()
+            return
+        
+        user_id = user_data['id']
+        user_email = user_data['email']
+        user_server = user_data['server_ip']
+        
+        await websocket.send_text(f"✅ 用户认证成功: {user_email}")
+        await asyncio.sleep(0.5)
+        
+        # 🔥 第二步：开始重启Docker容器
+        await websocket.send_text(f"🔧 开始修复服务（服务器：{SSH_HOST}{user_server}）...")
+        await asyncio.sleep(0.5)
+        
+        # 定义需要重启的容器
+        containers = [
+            f"blhx_{user_id}",
+            f"alas_{user_id}",
+            f"ws-scrcpy_{user_id}"
+        ]
+        
+        await websocket.send_text(f"📋 准备重启以下容器:")
+        for container in containers:
+            await websocket.send_text(f"  ➤ {container}")
+        await asyncio.sleep(0.5)
+        
+        # 重启每个容器
+        success_count = 0
+        fail_count = 0
+        
+        for container_name in containers:
+            await websocket.send_text(f"\n🔄 正在重启容器: {container_name}")
+            await asyncio.sleep(0.3)
+            
+            try:
+                # 🔥 使用sshpass进行密码认证，连接到10.10.10.227并重启容器
+                ssh_command = f"sshpass -p '{SSH_PASSWORD}' ssh -o StrictHostKeyChecking=no {SSH_USER}@{SSH_HOST}{user_server} 'docker restart {container_name}'"
+                
+                # 执行命令
+                process = await asyncio.create_subprocess_shell(
+                    ssh_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=30.0
+                )
+                
+                if process.returncode == 0:
+                    await websocket.send_text(f"  ✅ {container_name} 重启成功")
+                    success_count += 1
+                else:
+                    error_msg = stderr.decode('utf-8').strip() if stderr else "未知错误"
+                    await websocket.send_text(f"  ❌ {container_name} 重启失败: {error_msg[:100]}")
+                    fail_count += 1
+                
+            except asyncio.TimeoutError:
+                await websocket.send_text(f"  ⚠️ {container_name} 重启超时")
+                fail_count += 1
+            except Exception as e:
+                await websocket.send_text(f"  ❌ {container_name} 重启出错: {str(e)[:100]}")
+                fail_count += 1
+            
+            await asyncio.sleep(0.5)
+        
+        # 🔥 第三步：完成修复
+        await websocket.send_text("\n🎉 服务修复完成！")
+        await asyncio.sleep(0.5)
+        await websocket.send_text("📝 修复总结:")
+        await websocket.send_text(f"  ➤ 用户: {user_email} (ID: {user_id})")
+        await websocket.send_text(f"  ➤ 服务器: {SSH_HOST}{user_server}")
+        await websocket.send_text(f"  ➤ 成功重启: {success_count} 个容器")
+        if fail_count > 0:
+            await websocket.send_text(f"  ➤ 失败: {fail_count} 个容器")
+        await asyncio.sleep(1)
+        await websocket.send_text("✨ 即将返回控制台...")
+        
+        logger.info(f"修复服务完成 - 用户: {user_email} (ID: {user_id}), 服务器: {SSH_HOST}{user_server}, 成功: {success_count}, 失败: {fail_count}")
+        
+    except websockets.exceptions.WebSocketException as e:
+        logger.error(f"WebSocket异常: {e}")
+    except Exception as e:
+        logger.error(f"修复服务时发生错误: {e}", exc_info=True)
+        try:
+            await websocket.send_text(f"\n❌ 修复过程中发生错误: {str(e)[:100]}")
+            await asyncio.sleep(1)
+        except:
+            pass
+    finally:
+        # 确保WebSocket关闭
+        try:
+            await websocket.close()
+        except:
+            pass
+
+# ✅ 重连WebSocket服务 - HTTP接口，仅重启ws-scrcpy容器
+@app.post("/reconnect")
+async def reconnect_service(request: Request, db: Session = Depends(get_db)):
+    """重连用户WebSocket服务 - 仅重启ws-scrcpy容器"""
+    try:
+        # 验证用户身份
+        token = request.cookies.get("access_token")
+        if not token:
+            raise HTTPException(status_code=401, detail="缺少访问令牌")
+        
+        # 使用缓存获取用户信息
+        user_data = await get_current_user_from_token(token, db)
+        if not user_data:
+            raise HTTPException(status_code=401, detail="无效的访问令牌")
+        
+        user_id = user_data['id']
+        user_email = user_data['email']
+        user_server = user_data['server_ip']
+        # 只重启ws-scrcpy容器
+        container_name = f"ws-scrcpy_{user_id}"
+        
+        logger.info(f"开始重连WebSocket服务 - 用户: {user_email} (ID: {user_id}), 容器: {container_name}")
+        
+        try:
+            # 使用sshpass进行密码认证，连接到10.10.10.227并重启容器
+            ssh_command = f"sshpass -p '{SSH_PASSWORD}' ssh -o StrictHostKeyChecking=no {SSH_USER}@{SSH_HOST}{user_server} 'docker restart {container_name}'"
+            
+            # 执行命令
+            process = await asyncio.create_subprocess_shell(
+                ssh_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=30.0
+            )
+            
+            if process.returncode == 0:
+                logger.info(f"WebSocket容器重启成功 - 用户: {user_email}, 容器: {container_name}")
+                return {
+                    "success": True,
+                    "message": f"容器 {container_name} 重启成功",
+                    "user_email": user_email,
+                    "user_id": user_id,
+                    "container": container_name,
+                    "server": SSH_HOST
+                }
+            else:
+                error_msg = stderr.decode('utf-8').strip() if stderr else "未知错误"
+                logger.error(f"WebSocket容器重启失败 - 用户: {user_email}, 容器: {container_name}, 错误: {error_msg}")
+                return {
+                    "success": False,
+                    "message": f"容器 {container_name} 重启失败",
+                    "error": error_msg[:200],
+                    "user_email": user_email,
+                    "user_id": user_id,
+                    "container": container_name,
+                    "server": SSH_HOST
+                }
+            
+        except asyncio.TimeoutError:
+            logger.error(f"WebSocket容器重启超时 - 用户: {user_email}, 容器: {container_name}")
+            return {
+                "success": False,
+                "message": f"容器 {container_name} 重启超时",
+                "error": "操作超时（30秒）",
+                "user_email": user_email,
+                "user_id": user_id,
+                "container": container_name,
+                "server": SSH_HOST
+            }
+        except Exception as e:
+            logger.error(f"WebSocket容器重启出错 - 用户: {user_email}, 容器: {container_name}, 错误: {str(e)}")
+            return {
+                "success": False,
+                "message": f"容器 {container_name} 重启出错",
+                "error": str(e)[:200],
+                "user_email": user_email,
+                "user_id": user_id,
+                "container": container_name,
+                "server": SSH_HOST
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重连服务时发生错误: {str(e)}", exc_info=True)
