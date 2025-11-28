@@ -19,6 +19,8 @@ services:
       - "6200:6200"
     volumes:
       - ./backend:/app
+    environment:
+      - TZ=Asia/Shanghai
     restart: unless-stopped
 
   proxy-service:
@@ -29,6 +31,8 @@ services:
       - "6300:6300"
     volumes:
       - ./backend:/app
+    environment:
+      - TZ=Asia/Shanghai
     restart: unless-stopped
     depends_on:
       - auth-service

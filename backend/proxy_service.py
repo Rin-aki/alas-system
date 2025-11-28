@@ -14,7 +14,7 @@ import httpx
 import logging
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, cast
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -109,6 +109,7 @@ async def get_current_user_from_token(access_token: str) -> Optional[dict]:
                     "email": user.email,
                     "is_active": user.is_active,
                     "has_purchased": user.has_purchased,
+                    "purchase_expires": user.purchase_expires,
                     "alas_ip": user.alas_ip,
                     "blhx_ip": user.blhx_ip,
                     "ws_ip": user.ws_ip
@@ -122,6 +123,54 @@ async def get_current_user_from_token(access_token: str) -> Optional[dict]:
         logger.error(f"获取用户信息时出错: {e}")
     
     return None
+
+async def ensure_purchase_valid(user_id: int) -> bool:
+    """
+    确保用户的购买状态未过期。
+    - 返回 True 表示可以继续访问
+    - 返回 False 表示未购买或已过期（并会在过期时自动更新数据库状态）
+    """
+    try:
+        async with get_db_context() as db:
+            user = db.query(User).filter(User.id == int(user_id)).first()
+            if not user:
+                return False
+
+            # 未购买直接拒绝
+            if not cast(bool, user.has_purchased):
+                return False
+
+            expires = cast(Optional[datetime], user.purchase_expires)
+
+            # 没有过期时间也视为无效，顺便修正数据库状态
+            if not expires:
+                user.has_purchased = False  # type: ignore[assignment]
+                db.commit()
+                cache_key = f"user_{user_id}"
+                if cache_key in user_cache:
+                    cached_user, cache_time = user_cache[cache_key]
+                    cached_user["has_purchased"] = False
+                    cached_user["purchase_expires"] = user.purchase_expires
+                    user_cache[cache_key] = (cached_user, cache_time)
+                return False
+
+            # 已过期 -> 自动禁用
+            if expires < datetime.utcnow():
+                user.has_purchased = False  # type: ignore[assignment]
+                db.commit()
+                cache_key = f"user_{user_id}"
+                if cache_key in user_cache:
+                    cached_user, cache_time = user_cache[cache_key]
+                    cached_user["has_purchased"] = False
+                    cached_user["purchase_expires"] = user.purchase_expires
+                    user_cache[cache_key] = (cached_user, cache_time)
+                logger.info(f"用户购买已过期，自动禁用服务: {user.email} (ID: {user.id})")
+                return False
+
+            return True
+    except Exception as e:
+        logger.error(f"检查用户购买状态时发生错误: {e}")
+        return False
 
 # ✅ 关键修复4: WebSocket代理中不持有数据库连接
 @app.websocket("/")
@@ -150,6 +199,13 @@ async def proxy_ws(websocket: WebSocket):
             await websocket.close()
             return
 
+        # 检查购买是否有效（自动处理过期禁用）
+        if not await ensure_purchase_valid(user_data["id"]):
+            logger.warning(f"WebSocket访问被拒绝 - 用户 {user_data['email']} 套餐已过期或未购买")
+            closed = True
+            await websocket.close()
+            return
+
         # 🔥 此时数据库连接已经释放，user_data是内存中的字典
         logger.info(f"WebSocket代理开始 - 用户: {user_data['email']}")
 
@@ -174,7 +230,7 @@ async def proxy_ws(websocket: WebSocket):
 
         # 构建额外头部
         additional_headers = {
-            "User-Agent": websocket.headers.get("user-agent", ""),
+            "User-Agent": websocket.headers.get("user-agent") or "",
             "X-Forwarded-For": websocket.client.host if websocket.client else "unknown",
             "X-Forwarded-Host": host,
             "X-Real-IP": websocket.client.host if websocket.client else "unknown"
@@ -201,9 +257,9 @@ async def proxy_ws(websocket: WebSocket):
                     while True:
                         msg = await remote_ws.recv()
                         if use_bytes:
-                            await websocket.send_bytes(msg)
+                            await websocket.send_bytes(cast(bytes, msg))
                         else:
-                            await websocket.send_text(msg)
+                            await websocket.send_text(cast(str, msg))
                 except Exception as e:
                     logger.debug(f"[server_to_client] 连接关闭: {e}")
 
@@ -284,6 +340,10 @@ async def proxy_http(path: str, request: Request):
         user_data = await get_current_user_from_token(token)
         if not user_data:
             raise HTTPException(status_code=401, detail="无效的访问令牌")
+
+        # 检查购买是否有效（自动处理过期禁用）
+        if not await ensure_purchase_valid(user_data["id"]):
+            raise HTTPException(status_code=403, detail="服务已过期或未购买")
         
         host = request.headers.get("host", "")
         if "scrcpy" in host:
