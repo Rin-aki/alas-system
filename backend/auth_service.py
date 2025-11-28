@@ -33,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@MySQL/DataBase"
+DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@10.10.10.123:3306/DataBase"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -55,7 +55,7 @@ security = HTTPBearer()
 # 服务器SSH配置
 SSH_HOST = "10.10.10."
 SSH_USER = "root"
-SSH_PASSWORD = "your_ssh_password_here"  # 请修改为实际的SSH密码
+SSH_PASSWORD = "lpfH5a3h78"  # 请修改为实际的SSH密码
 
 # 用户缓存，用于减少数据库查询
 user_cache = {}
@@ -544,7 +544,7 @@ async def reconnect_service(request: Request, db: Session = Depends(get_db)):
                     "user_email": user_email,
                     "user_id": user_id,
                     "container": container_name,
-                    "server": SSH_HOST
+                    "server": f"{SSH_HOST}{user_server}"
                 }
             else:
                 error_msg = stderr.decode('utf-8').strip() if stderr else "未知错误"
@@ -556,7 +556,7 @@ async def reconnect_service(request: Request, db: Session = Depends(get_db)):
                     "user_email": user_email,
                     "user_id": user_id,
                     "container": container_name,
-                    "server": SSH_HOST
+                    "server": f"{SSH_HOST}{user_server}"
                 }
             
         except asyncio.TimeoutError:
@@ -568,7 +568,7 @@ async def reconnect_service(request: Request, db: Session = Depends(get_db)):
                 "user_email": user_email,
                 "user_id": user_id,
                 "container": container_name,
-                "server": SSH_HOST
+                "server": f"{SSH_HOST}{user_server}"
             }
         except Exception as e:
             logger.error(f"WebSocket容器重启出错 - 用户: {user_email}, 容器: {container_name}, 错误: {str(e)}")
@@ -579,7 +579,7 @@ async def reconnect_service(request: Request, db: Session = Depends(get_db)):
                 "user_email": user_email,
                 "user_id": user_id,
                 "container": container_name,
-                "server": SSH_HOST
+                "server": f"{SSH_HOST}{user_server}"
             }
         
     except HTTPException:

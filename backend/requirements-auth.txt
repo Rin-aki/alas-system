@@ -5,3 +5,5 @@ pymysql
 passlib
 python-jose
 email-validator
+websockets
+cryptography

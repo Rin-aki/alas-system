@@ -1,196 +1,212 @@
 <template>
-  <div class="glass-panel">
-    <h2>ALAS管理系统</h2>
-    <el-form
-      :model="ruleForm"
-      status-icon
-      :rules="rules"
-      ref="ruleForm"
-      label-position="left"
-      label-width="70px"
-      class="login-from"
-    >
-      <el-form-item label="邮箱" prop="email">
-        <el-input v-model="ruleForm.email"></el-input>
-      </el-form-item>
-      <el-form-item label="密码" prop="password">
-        <el-input
-          type="password"
-          v-model="ruleForm.password"
-          autocomplete="off"
-        ></el-input>
-        <div class="register-link">
-          <router-link to="/register">
-            <span>第一次使用？前往注册</span>
-          </router-link>
+  <div class="login-container">
+    <div class="glass-panel super-glass animate-entry">
+      <div class="header">
+        <h1>ALAS</h1>
+        <p class="subtitle">管理系统登录</p>
+      </div>
+      
+      <el-form
+        ref="loginFormRef"
+        :model="ruleForm"
+        :rules="rules"
+        class="login-form"
+        size="large"
+      >
+        <el-form-item prop="email">
+          <el-input 
+            v-model="ruleForm.email" 
+            placeholder="请输入邮箱"
+            :prefix-icon="Message"
+          />
+        </el-form-item>
+        
+        <el-form-item prop="password">
+          <el-input
+            type="password"
+            v-model="ruleForm.password"
+            placeholder="请输入密码"
+            show-password
+            :prefix-icon="Lock"
+            @keyup.enter="submitForm"
+          />
+        </el-form-item>
+
+        <div class="form-footer">
+           <router-link to="/register" class="link-text">
+             没有账号？立即注册
+           </router-link>
         </div>
-      </el-form-item>
-    </el-form>
-    <div class="btnGroup">
-      <el-button type="primary" @click="submitForm('ruleForm')" style="width: 100%">登录</el-button>
+
+        <el-button 
+          type="primary" 
+          :loading="isLoading"
+          @click="submitForm" 
+          class="submit-btn"
+          round
+        >
+          登 录
+        </el-button>
+      </el-form>
     </div>
   </div>
 </template>
 
-<script>
-import { userService } from '../../services/api.js';
+<script setup>
+import { ref, reactive } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Message, Lock } from '@element-plus/icons-vue'
+import { userService } from '../../services/api.js'
 
-export default {
-  data() {
-    return {
-      ruleForm: {
-        email: "",
-        password: "",
-      },
-      rules: {
-        email: [
-          { required: true, message: "邮箱不能为空！", trigger: "blur" },
-          { type: 'email', message: "请输入正确的邮箱格式", trigger: "blur" }
-        ],
-        password: [
-          { required: true, message: "密码不能为空！", trigger: "blur" },
-        ],
-      },
-    };
-  },
+const router = useRouter()
+// 表单数据对象
+const ruleForm = reactive({ email: "", password: "" })
+// 修复点3：定义唯一的表单引用变量
+const loginFormRef = ref(null)
+const isLoading = ref(false)
 
-  methods: {
-    submitForm(formName) {
-      this.$refs[formName].validate((valid) => {
-        if (valid) {
-          // 显示加载状态
-          const loading = this.$loading({
-            lock: true,
-            text: '登录中...',
-            spinner: 'el-icon-loading',
-            background: 'rgba(0, 0, 0, 0.7)'
-          });
+const rules = {
+  email: [
+    { required: true, message: "邮箱不能为空", trigger: "blur" },
+    { type: 'email', message: "格式不正确", trigger: "blur" }
+  ],
+  password: [
+    { required: true, message: "密码不能为空", trigger: "blur" },
+  ]
+}
+
+// 修复点4：重写提交逻辑
+const submitForm = async () => {
+  console.log("点击了登录按钮") // 调试日志
+  
+  // 确保表单实例已加载
+  if (!loginFormRef.value) {
+    console.error("表单实例未找到")
+    return
+  }
+  
+  // 调用 Element Plus 的验证方法
+  await loginFormRef.value.validate((valid, fields) => {
+    if (valid) {
+      console.log("验证通过，准备发送请求...")
+      isLoading.value = true
+      
+      userService.login({
+        email: ruleForm.email,
+        password: ruleForm.password
+      })
+      .then(response => {
+        console.log("登录响应:", response)
+        if (response.status === 200) {
+          ElMessage.success(response.data.msg || '欢迎回来')
+          // 存储数据
+          localStorage.setItem('user_id', response.data.user_id)
+          localStorage.setItem('email', response.data.email)
+          localStorage.setItem('ip', response.data.ip)
           
-          // 使用API服务发送登录请求
-          userService.login({
-            email: this.ruleForm.email,
-            password: this.ruleForm.password
-          })
-          .then(response => {
-            loading.close();
-            
-            if (response.status === 200) {
-              // 登录成功
-              this.$message.success(response.data.msg || '登录成功');
-              
-              // 保存令牌到本地存储
-              localStorage.setItem('user_id', response.data.user_id);
-              localStorage.setItem('email', response.data.email);
-              localStorage.setItem('ip', response.data.ip);
-              console.log(response.data.email)
-              
-              // 跳转到仪表盘
-              this.$router.push('/dashboard');
-            } else if (response.status === 403) {
-              // 账户未激活
-              this.$message.warning(response.data.error || '账户未激活，请查收邮件进行激活');
-            } else {
-              // 登录失败
-              this.$message.error(response.data.error || '邮箱或密码错误');
-            }
-          })
-          .catch(error => {
-            loading.close();
-            console.error('登录请求错误:', error);
-            this.$message.error('网络错误，请稍后重试');
-          });
+          // 延迟跳转，让用户看到成功的提示
+          setTimeout(() => {
+             router.push('/dashboard')
+          }, 500)
+        } else if (response.status === 403) {
+           ElMessage.warning(response.data.error || '账户未激活')
         } else {
-          console.log("表单验证失败");
-          return false;
+           ElMessage.error(response.data.error || '登录失败')
         }
-      });
-    },
-    goToRegister() {
-      this.$router.push('/register');
+      })
+      .catch(err => {
+        console.error('API错误:', err)
+        ElMessage.error('网络连接异常或服务器错误')
+      })
+      .finally(() => {
+        isLoading.value = false
+      })
+    } else {
+      console.log('表单验证失败', fields)
+      // 验证失败时增加一点震动效果提示（可选）
+      ElMessage.warning('请检查输入项')
+      return false
     }
-  },
-};
+  })
+}
 </script>
 
 <style scoped>
-.glass-panel {
-  position: fixed;
-  top: 0;
-  left: 5%;
-  width: 20%;
+.login-container {
   height: 100vh;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  background-color: rgba(255, 255, 255, 0.2);
-  box-shadow: rgba(0, 0, 0, 0.1) 0px 4px 6px, rgba(0, 0, 0, 0.1) 0px 1px 3px;
-  z-index: 2;
   display: flex;
-  flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding: 40px;
-  margin: 0;
+  padding: 20px;
 }
 
-/* 手机端适配 */
-@media (max-width: 768px) {
-  .glass-panel {
-    left: 0;
-    width: 100%;
-    padding: 20px;
-  }
+.glass-panel {
+  width: 100%;
+  max-width: 420px;
+  padding: 40px 35px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* 平板端适配 */
-@media (min-width: 769px) and (max-width: 1024px) {
-  .glass-panel {
-    left: 2%;
-    width: 40%;
-    padding: 30px;
-  }
-}
-
-.glass-panel h2 {
+.header {
   text-align: center;
+  margin-bottom: 40px;
+}
+
+.header h1 {
+  font-size: 3em;
+  margin: 0;
+  background: linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: 4px;
+  font-weight: 800;
+}
+
+.subtitle {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 1.1em;
+  letter-spacing: 2px;
+}
+
+.login-form {
+  width: 100%;
+}
+
+.form-footer {
+  display: flex;
+  justify-content: flex-end;
   margin-bottom: 20px;
-  color: #333;
 }
 
-.login-from {
-  width: 100%;
-  max-width: 400px;
-}
-
-.btnGroup {
-  width: 100%;
-  max-width: 400px;
-  margin-top: 20px;
-}
-
-.register-link {
-  text-align: right;
-  margin-top: 10px; /* 增加与密码框的间距 */
-  width: 100%;
-}
-
-.register-link span {
-  color: #409eff;
-  cursor: pointer;
+.link-text {
+  color: var(--primary-color);
+  font-size: 14px;
   text-decoration: none;
-  transition: color 0.3s;
+  opacity: 0.8;
+  transition: opacity 0.2s;
 }
 
-.register-link span:hover {
-  color: #66b1ff;
+.link-text:hover {
+  opacity: 1;
   text-decoration: underline;
 }
 
-/* 手机端注册链接样式调整 */
-@media (max-width: 768px) {
-  .register-link {
-    text-align: center;
-    font-size: 14px;
-    margin-bottom: 20px;
-  }
+.submit-btn {
+  width: 100%;
+  font-weight: bold;
+  font-size: 16px;
+  padding: 22px 0;
+  background: linear-gradient(90deg, #409eff, #36d1dc);
+  border: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.submit-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(64, 158, 255, 0.4);
 }
 </style>

@@ -1,293 +1,329 @@
 <template>
-  <div class="glass-panel">
-    <h2>欢迎使用ALAS管理系统</h2>
-    <p>您的邮箱: <strong>{{ user.email }}</strong></p>
-    <p>您的用户ID: <strong>{{ user.id }}</strong></p>
-    
-    <!-- 购买状态信息 -->
-    <div class="purchase-info">
-      <h3>购买状态</h3>
-      <el-tag v-if="purchaseStatus.has_purchased" type="success">已购买</el-tag>
-      <el-tag v-else type="info">未购买</el-tag>
-      
-      <div v-if="purchaseStatus.has_purchased" class="purchase-details">
-        <p>过期时间: {{ formatDate(purchaseStatus.purchase_expires) }}</p>
-        <p>剩余天数: {{ purchaseStatus.days_remaining }} 天</p>
-      </div>
+  <div class="dashboard-container animate-entry">
+    <div class="header-section">
+      <h2>控制台</h2>
+      <p class="welcome-text">欢迎回来，指挥官</p>
     </div>
 
-    <div class="button-group">
-      <el-button type="primary" @click="linkblhx">连接实例</el-button>
-      <el-button type="success" @click="linkalas">连接Alas</el-button>
-      <el-button type="warning" @click="reconnect" :loading="reconnecting">重连服务</el-button>
-      <el-button type="danger" @click="fix">疑难修复</el-button>
-    </div>
+    <el-row :gutter="20">
+      <el-col :xs="24" :md="10" :lg="8">
+        <div class="glass-card super-glass profile-card">
+          <div class="avatar-section">
+            <el-avatar :size="80" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
+            <h3>{{ user.email || 'Loading...' }}</h3>
+            <p class="uid">UID: {{ user.id }}</p>
+          </div>
+          
+          <div class="info-list">
+            <div class="info-item">
+              <span>购买状态</span>
+              <el-tag :type="purchaseStatus.has_purchased ? 'success' : 'info'" effect="dark" round>
+                {{ purchaseStatus.has_purchased ? '已激活' : '未激活' }}
+              </el-tag>
+            </div>
+            <div class="info-item" v-if="purchaseStatus.has_purchased">
+              <span>剩余天数</span>
+              <span class="highlight-value">{{ purchaseStatus.days_remaining }} 天</span>
+            </div>
+            <div class="info-item" v-if="purchaseStatus.has_purchased">
+              <span>过期时间</span>
+              <span class="date-text">{{ formatDate(purchaseStatus.purchase_expires) }}</span>
+            </div>
+          </div>
+          
+          <div class="logout-btn-wrapper">
+            <el-button type="danger" plain round style="width: 100%" @click="logout" :icon="SwitchButton">
+              退出登录
+            </el-button>
+          </div>
+        </div>
+      </el-col>
 
-    <div class="logout-section">
-      <el-button type="danger" @click="logout">登出</el-button>
-    </div>
+      <el-col :xs="24" :md="14" :lg="16">
+        <div class="glass-card super-glass action-card">
+          <h3 class="card-title">实例控制</h3>
+          
+          <div class="action-grid">
+            <div class="action-item" @click="linkblhx">
+              <div class="icon-box blue">
+                <el-icon><Monitor /></el-icon>
+              </div>
+              <span>连接实例</span>
+              <p>远程游戏控制</p>
+            </div>
+
+            <div class="action-item" @click="linkalas">
+              <div class="icon-box green">
+                <el-icon><Setting /></el-icon>
+              </div>
+              <span>连接 ALAS</span>
+              <p>配置脚本参数</p>
+            </div>
+
+            <div class="action-item" @click="reconnect">
+              <div class="icon-box orange" :class="{ 'spinning': reconnecting }">
+                <el-icon><Refresh /></el-icon>
+              </div>
+              <span>{{ reconnecting ? '重连中...' : '重连服务' }}</span>
+              <p>连接实例页面失效时使用</p>
+            </div>
+
+            <div class="action-item" @click="fix">
+              <div class="icon-box red">
+                <el-icon><FirstAidKit /></el-icon>
+              </div>
+              <span>重启服务</span>
+              <p>解决游戏卡死/alas异常</p>
+            </div>
+          </div>
+        </div>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
-<script>
-import { userService } from '../../services/api.js';
+<script setup>
+import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { Monitor, Setting, Refresh, FirstAidKit, SwitchButton } from '@element-plus/icons-vue'
+import { userService } from '../../services/api.js'
 
-export default {
-  data() {
-    return {
-      user: {
-        email: "",
-        id: null,
-        device_ip: "",
-        blhx_port: "",
-        alas_port: ""
-      },
-      purchaseStatus: {
-        has_purchased: false,
-        purchase_expires: null,
-        days_remaining: 0,
-        purchase_expired: false
-      },
-      purchaseForm: {
-        days: 30
-      },
-      loading: false,
-      reconnecting: false
-    };
-  },
-  created() {
-    this.initUser();
-    this.getPurchaseStatus();
-  },
-  methods: {
-    // 初始化用户信息
-    initUser() {
-      userService.authcheck()
-        .then(response => {
-          if (response.ok) {
-            this.user.email = localStorage.getItem('email') || '未知邮箱';
-            this.user.id = localStorage.getItem('user_id') || '未知ID';
-            this.user.blhx_port = localStorage.getItem('blhx_port') || '未知碧蓝航线端口';
-            this.user.device_ip = localStorage.getItem('device_ip') || '未知设备IP';
-            this.user.alas_port = localStorage.getItem('alas_port') || '未知alas端口';
-          } else {
-            this.$router.push('/login');
-          }
-        })
-        .catch(() => {
-          this.$router.push('/login');
-        });
-    },
-    
-    // 获取购买状态
-    getPurchaseStatus() {
-      this.loading = true;
-      
-      userService.getPurchaseStatus()
-        .then(response => {
-          if (response.status === 200) {
-            this.purchaseStatus = response.data;
-          } else if (response.status === 422) {
-            this.$message.error('登录状态已过期，请重新登录');
-            this.logout();
-          } else {
-            this.$message.error(response.data.error || `获取购买状态失败 (状态码: ${response.status})`);
-          }
-        })
-        .catch(error => {
-          console.error('获取购买状态错误:', error);
-          this.$message.error('网络错误，请稍后重试');
-        })
-        .finally(() => {
-          this.loading = false;
-        });
-    },
-    
-    // 格式化日期
-    formatDate(dateString) {
-      if (!dateString) return '无';
-      const date = new Date(dateString);
-      return date.toLocaleString();
-    },
-    // 连接实例
-    linkblhx() {
-      if (!this.purchaseStatus.has_purchased) {
-          this.$message.warning('您尚未购买服务，无法连接实例');
-          return;
-        }
-        this.loading = true;
+const router = useRouter()
+const loading = ref(false)
+const reconnecting = ref(false)
 
-        const userId = localStorage.getItem('user_id');
-        if (!userId) {
-          this.$message.error('用户ID未找到，无法跳转');
-          this.loading = false;
-          return;
-        }
+const user = reactive({
+  email: "",
+  id: null
+})
 
-      const url = `https://scrcpy.gjiang.xyz:58000/`;
-      window.location.href = url; // 跳转到动态子域名的外部网页
-    },
-    linkalas() {
-      if (!this.purchaseStatus.has_purchased) {
-          this.$message.warning('您尚未购买服务，无法连接实例');
-          return;
-        }
-        this.loading = true;
+const purchaseStatus = reactive({
+  has_purchased: false,
+  purchase_expires: null,
+  days_remaining: 0
+})
 
-        const userId = localStorage.getItem('user_id');
-        if (!userId) {
-          this.$message.error('用户ID未找到，无法跳转');
-          this.loading = false;
-          return;
-        }
-
-      const url = `https://alas.gjiang.xyz:58000/`;
-      window.location.href = url; // 跳转到动态子域名的外部网页
-    },
-    fix(){
-      if (!this.purchaseStatus.has_purchased) {
-          this.$message.warning('您尚未购买服务，无法进行疑难修复');
-          return;
-        }
-        this.loading = true;
-
-        const userId = localStorage.getItem('user_id');
-        if (!userId) {
-          this.$message.error('用户ID未找到，无法跳转');
-          this.loading = false;
-          return;
-        }
-
-      this.$router.push('/fix')
-    },
-    
-    // 重连服务
-    async reconnect() {
-      if (!this.purchaseStatus.has_purchased) {
-        this.$message.warning('您尚未购买服务，无法重连服务');
-        return;
-      }
-      
-      this.reconnecting = true;
-      
-      try {
-        const response = await userService.reconnect();
-        
-        if (response.status === 200 && response.data.success) {
-          this.$message.success(response.data.message || 'WebSocket服务重启成功！');
-        } else if (response.status === 200 && !response.data.success) {
-          this.$message.error(response.data.message || 'WebSocket服务重启失败');
-          if (response.data.error) {
-            console.error('重启错误:', response.data.error);
-          }
-        } else if (response.status === 401) {
-          this.$message.error('登录状态已过期，请重新登录');
-          this.logout();
-        } else {
-          this.$message.error(`重连失败 (状态码: ${response.status})`);
-        }
-      } catch (error) {
-        console.error('重连服务错误:', error);
-        this.$message.error('网络错误，请稍后重试');
-      } finally {
-        this.reconnecting = false;
-      }
-    },
-    // 登出
-    async logout() {
-      try {
-        // 先清理本地存储
-        localStorage.removeItem('user_id');
-        localStorage.removeItem('email');
-        localStorage.removeItem('ip');
-        localStorage.removeItem('blhx_port');
-        localStorage.removeItem('device_ip');
-        localStorage.removeItem('alas_port');
-        
-        // 调用后端登出API并等待完成
-        await userService.logout();
-        
-        this.$message.success('已成功登出');
-        
-        // 使用 replace 而不是 push，避免路由历史问题
-        // 添加一个小延迟确保后端状态更新
-        setTimeout(() => {
-          this.$router.replace('/login');
-        }, 100);
-        
-      } catch (error) {
-        console.error('登出过程中出现错误:', error);
-        // 即使出错也要清理状态并跳转
-        this.$message.success('已成功登出');
-        this.$router.replace('/login');
-      }
+// 初始化逻辑 (保持原有逻辑不变，转为 Composition API 写法)
+const initUser = async () => {
+  try {
+    const res = await userService.authcheck()
+    if (res.ok) {
+      user.email = localStorage.getItem('email')
+      user.id = localStorage.getItem('user_id')
+    } else {
+      router.push('/login')
     }
+  } catch {
+    router.push('/login')
   }
-};
+}
+
+const getPurchaseStatus = async () => {
+  loading.value = true
+  try {
+    const res = await userService.getPurchaseStatus()
+    if (res.status === 200) {
+      Object.assign(purchaseStatus, res.data)
+    } else if (res.status === 422) {
+      logout()
+    }
+  } catch (err) {
+    console.error(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return '无'
+  return new Date(dateStr).toLocaleDateString()
+}
+
+// 动作函数
+const checkAuth = () => {
+  if (!purchaseStatus.has_purchased) {
+    ElMessage.warning('您尚未购买服务')
+    return false
+  }
+  return true
+}
+
+const linkblhx = () => {
+  if (!checkAuth()) return
+  window.location.href = `https://scrcpy.gjiang.xyz:58000/`
+}
+
+const linkalas = () => {
+  if (!checkAuth()) return
+  window.location.href = `https://alas.gjiang.xyz:58000/`
+}
+
+const fix = () => {
+  if (!checkAuth()) return
+  router.push('/fix')
+}
+
+const reconnect = async () => {
+  if (!checkAuth()) return
+  reconnecting.value = true
+  try {
+    const res = await userService.reconnect()
+    if (res.status === 200 && res.data.success) {
+      ElMessage.success('服务重启成功')
+    } else {
+      ElMessage.error('重启失败')
+    }
+  } catch {
+    ElMessage.error('网络错误')
+  } finally {
+    reconnecting.value = false
+  }
+}
+
+const logout = async () => {
+  localStorage.clear()
+  try {
+    await userService.logout()
+  } catch (e) { console.log(e) }
+  router.replace('/login')
+}
+
+onMounted(() => {
+  initUser()
+  getPurchaseStatus()
+})
 </script>
 
 <style scoped>
-.glass-panel {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 600px;
-  max-height: 80vh;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  background-color: rgba(255, 255, 255, 0.2);
-  box-shadow: rgba(0, 0, 0, 0.1) 0px 4px 6px, rgba(0, 0, 0, 0.1) 0px 1px 3px;
-  z-index: 2;
-  padding: 40px;
-  text-align: center;
-  overflow-y: auto;
+.dashboard-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 20px;
 }
 
-.glass-panel h2 {
+.header-section {
+  margin-bottom: 30px;
+  text-align: left;
+  color: white;
+}
+
+.header-section h2 {
+  margin: 0;
+  font-size: 2.5em;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.welcome-text {
+  opacity: 0.8;
+  margin-top: 5px;
+}
+
+.glass-card {
+  padding: 30px;
   margin-bottom: 20px;
-  color: #333;
+  height: 100%;
 }
 
-.glass-panel p {
-  margin: 10px 0;
-  color: #555;
+/* 左侧个人信息卡 */
+.avatar-section {
+  text-align: center;
+  margin-bottom: 30px;
 }
 
-.purchase-info {
-  margin: 20px 0;
-  padding: 15px;
-  background-color: rgba(248, 249, 250, 0.6);
-  border-radius: 5px;
-  backdrop-filter: blur(5px);
+.avatar-section h3 {
+  margin: 15px 0 5px;
+  font-size: 1.2em;
 }
 
-.purchase-info h3 {
-  margin-bottom: 10px;
-  color: #333;
+.uid {
+  color: var(--text-secondary);
+  font-size: 0.9em;
 }
 
-.purchase-details {
-  margin-top: 10px;
+.info-list {
+  margin-bottom: 30px;
 }
 
-.purchase-details p {
-  margin: 5px 0;
-  color: #555;
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.button-group {
+.highlight-value {
+  color: #67c23a;
+  font-weight: bold;
+}
+
+/* 右侧动作卡 */
+.card-title {
+  margin-top: 0;
+  margin-bottom: 25px;
+  border-left: 4px solid var(--primary-color);
+  padding-left: 10px;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+}
+
+.action-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 25px;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.action-item:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-5px);
+}
+
+.icon-box {
+  width: 50px;
+  height: 50px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  margin: 20px 0;
-  flex-wrap: wrap;
+  font-size: 24px;
+  margin-bottom: 15px;
 }
 
-.logout-section {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(238, 238, 238, 0.5);
+.icon-box.blue { background: rgba(64, 158, 255, 0.2); color: #409eff; }
+.icon-box.green { background: rgba(103, 194, 58, 0.2); color: #67c23a; }
+.icon-box.orange { background: rgba(230, 162, 60, 0.2); color: #e6a23c; }
+.icon-box.red { background: rgba(245, 108, 108, 0.2); color: #f56c6c; }
+
+.spinning {
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.action-item span {
+  font-weight: bold;
+  font-size: 1.1em;
+  margin-bottom: 5px;
+}
+
+.action-item p {
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--text-secondary);
 }
 </style>
