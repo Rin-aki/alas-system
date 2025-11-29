@@ -7,3 +7,4 @@ python-jose
 email-validator
 websockets
 cryptography
+apscheduler

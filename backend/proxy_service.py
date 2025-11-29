@@ -96,10 +96,10 @@ async def get_current_user_from_token(access_token: str) -> Optional[dict]:
         if cache_key in user_cache:
             cached_user, cache_time = user_cache[cache_key]
             # ✅ 缓存时间从5分钟增加到15分钟，减少数据库查询
-            if (datetime.utcnow() - cache_time).seconds < 900:  # 15分钟
+            if (datetime.now() - cache_time).seconds < 900:  # 15分钟
                 logger.debug(f"使用缓存的用户信息: {user_id}")
                 return cached_user
-        
+
         # ✅ 关键修复3: 使用上下文管理器，确保立即释放连接
         async with get_db_context() as db:
             user = db.query(User).filter(User.id == int(user_id)).first()
@@ -114,7 +114,7 @@ async def get_current_user_from_token(access_token: str) -> Optional[dict]:
                     "blhx_ip": user.blhx_ip,
                     "ws_ip": user.ws_ip
                 }
-                user_cache[cache_key] = (user_data, datetime.utcnow())
+                user_cache[cache_key] = (user_data, datetime.now())
                 logger.info(f"从数据库加载用户信息并缓存: {user_id}")
                 return user_data
     except JWTError as e:
@@ -126,11 +126,57 @@ async def get_current_user_from_token(access_token: str) -> Optional[dict]:
 
 async def ensure_purchase_valid(user_id: int) -> bool:
     """
-    确保用户的购买状态未过期。
+    确保用户的购买状态未过期（优先使用缓存）。
     - 返回 True 表示可以继续访问
     - 返回 False 表示未购买或已过期（并会在过期时自动更新数据库状态）
     """
     try:
+        # ✅ 优化：先检查缓存中的购买状态
+        cache_key = f"user_{user_id}"
+        if cache_key in user_cache:
+            cached_user, cache_time = user_cache[cache_key]
+
+            # 如果缓存未过期（15分钟内），优先使用缓存检查
+            if (datetime.now() - cache_time).seconds < 900:
+                # 未购买直接拒绝
+                if not cached_user.get("has_purchased"):
+                    return False
+
+                # 检查过期时间
+                expires_str = cached_user.get("purchase_expires")
+                if not expires_str:
+                    # 没有过期时间，需要更新数据库
+                    async with get_db_context() as db:
+                        user = db.query(User).filter(User.id == int(user_id)).first()
+                        if user:
+                            user.has_purchased = False  # type: ignore[assignment]
+                            db.commit()
+                            cached_user["has_purchased"] = False
+                            user_cache[cache_key] = (cached_user, cache_time)
+                    return False
+
+                # 解析过期时间并检查
+                if isinstance(expires_str, datetime):
+                    expires = expires_str
+                else:
+                    expires = datetime.fromisoformat(expires_str) if isinstance(expires_str, str) else expires_str
+
+                if expires and expires < datetime.now():
+                    # 已过期，更新数据库和缓存
+                    async with get_db_context() as db:
+                        user = db.query(User).filter(User.id == int(user_id)).first()
+                        if user:
+                            user.has_purchased = False  # type: ignore[assignment]
+                            db.commit()
+                            cached_user["has_purchased"] = False
+                            user_cache[cache_key] = (cached_user, cache_time)
+                            logger.info(f"用户购买已过期，自动禁用服务: {user.email} (ID: {user.id})")
+                    return False
+
+                # 缓存显示有效
+                return True
+
+        # ✅ 缓存不存在或已过期，从数据库加载
         async with get_db_context() as db:
             user = db.query(User).filter(User.id == int(user_id)).first()
             if not user:
@@ -146,23 +192,21 @@ async def ensure_purchase_valid(user_id: int) -> bool:
             if not expires:
                 user.has_purchased = False  # type: ignore[assignment]
                 db.commit()
-                cache_key = f"user_{user_id}"
                 if cache_key in user_cache:
                     cached_user, cache_time = user_cache[cache_key]
                     cached_user["has_purchased"] = False
-                    cached_user["purchase_expires"] = user.purchase_expires
+                    cached_user["purchase_expires"] = None
                     user_cache[cache_key] = (cached_user, cache_time)
                 return False
 
             # 已过期 -> 自动禁用
-            if expires < datetime.utcnow():
+            if expires < datetime.now():
                 user.has_purchased = False  # type: ignore[assignment]
                 db.commit()
-                cache_key = f"user_{user_id}"
                 if cache_key in user_cache:
                     cached_user, cache_time = user_cache[cache_key]
                     cached_user["has_purchased"] = False
-                    cached_user["purchase_expires"] = user.purchase_expires
+                    cached_user["purchase_expires"] = expires
                     user_cache[cache_key] = (cached_user, cache_time)
                 logger.info(f"用户购买已过期，自动禁用服务: {user.email} (ID: {user.id})")
                 return False
@@ -412,6 +456,41 @@ async def proxy_http(path: str, request: Request):
         raise HTTPException(status_code=500, detail="内部服务器错误")
 
 
+
+def cleanup_expired_cache():
+    """清理过期的用户缓存（超过15分钟）"""
+    try:
+        current_time = datetime.now()
+        expired_keys = []
+
+        for cache_key, (cached_user, cache_time) in user_cache.items():
+            # 如果缓存超过15分钟，标记为过期
+            if (current_time - cache_time).seconds >= 900:
+                expired_keys.append(cache_key)
+
+        # 删除过期缓存
+        for key in expired_keys:
+            del user_cache[key]
+
+        if expired_keys:
+            logger.info(f"缓存清理完成：删除了 {len(expired_keys)} 个过期缓存条目")
+    except Exception as e:
+        logger.error(f"缓存清理失败: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化"""
+    import asyncio
+
+    async def periodic_cache_cleanup():
+        """定期清理过期缓存（每30分钟）"""
+        while True:
+            await asyncio.sleep(1800)  # 30分钟
+            cleanup_expired_cache()
+
+    # 启动后台缓存清理任务
+    asyncio.create_task(periodic_cache_cleanup())
+    logger.info("✅ 缓存清理任务已启动：每30分钟清理一次过期缓存")
 
 @app.on_event("shutdown")
 async def shutdown_event():

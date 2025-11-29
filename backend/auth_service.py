@@ -19,11 +19,16 @@ import secrets
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from contextlib import asynccontextmanager
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = FastAPI(title="用户认证系统", version="1.0.0")
+
+# 定时任务调度器
+scheduler = AsyncIOScheduler()
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,7 +39,15 @@ app.add_middleware(
 )
 
 DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@10.10.10.123:3306/DataBase"
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=10,              # 连接池大小
+    max_overflow=20,           # 超出pool_size后最多再创建的连接数
+    pool_recycle=1800,         # 30分钟回收连接
+    pool_timeout=10,           # 获取连接的超时时间
+    pool_pre_ping=True,        # 使用前检查连接是否有效
+    echo=False
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -97,12 +110,21 @@ def get_db():
     finally:
         db.close()
 
+@asynccontextmanager
+async def get_db_context():
+    """异步上下文管理器，用于需要独立数据库会话的场景（如WebSocket）"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -148,10 +170,10 @@ async def get_current_user_from_token(access_token: str, db: Session) -> Optiona
         if cache_key in user_cache:
             cached_user, cache_time = user_cache[cache_key]
             # 缓存15分钟
-            if (datetime.utcnow() - cache_time).seconds < 900:
+            if (datetime.now() - cache_time).seconds < 900:
                 logger.debug(f"使用缓存的用户信息: {user_id}")
                 return cached_user
-        
+
         # 从数据库加载用户信息
         user = db.query(User).filter(User.id == int(user_id)).first()
         if user:
@@ -165,7 +187,7 @@ async def get_current_user_from_token(access_token: str, db: Session) -> Optiona
                 "ws_ip": user.ws_ip,
                 "server_ip": user.server_ip
             }
-            user_cache[cache_key] = (user_data, datetime.utcnow())
+            user_cache[cache_key] = (user_data, datetime.now())
             logger.info(f"从数据库加载用户信息并缓存: {user_id}")
             return user_data
     except JWTError as e:
@@ -227,11 +249,48 @@ def allocate_unique_ips(db: Session) -> tuple:
 #         return False
 
 def check_purchase_expiration(user: User, db: Session) -> bool:
-    if user.has_purchased and user.purchase_expires and user.purchase_expires < datetime.utcnow():
+    """检查单个用户的购买是否过期,如果过期则自动禁用"""
+    if user.has_purchased and user.purchase_expires and user.purchase_expires < datetime.now():
         user.has_purchased = False
         db.commit()
         return True
     return False
+
+def check_all_users_expiration():
+    """定时任务:检查所有用户的购买过期状态"""
+    db = SessionLocal()
+    try:
+        # 查询所有已购买且有过期时间的用户
+        users = db.query(User).filter(
+            User.has_purchased == True,
+            User.purchase_expires.isnot(None)
+        ).all()
+
+        expired_count = 0
+        current_time = datetime.now()
+
+        for user in users:
+            if user.purchase_expires < current_time:
+                logger.info(f"定时任务检测到用户过期: {user.email} (ID: {user.id}), 过期时间: {user.purchase_expires}")
+                user.has_purchased = False
+                expired_count += 1
+
+                # 清除该用户的缓存
+                cache_key = f"user_{user.id}"
+                if cache_key in user_cache:
+                    del user_cache[cache_key]
+
+        if expired_count > 0:
+            db.commit()
+            logger.info(f"定时任务完成:共禁用 {expired_count} 个过期用户")
+        else:
+            logger.debug("定时任务完成:没有发现过期用户")
+
+    except Exception as e:
+        logger.error(f"定时任务执行失败: {e}", exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
 
 @app.post("/register")
 async def register(user_data: UserRegister, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -306,12 +365,12 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
 @app.post("/purchase")
 async def purchase(purchase_data: PurchaseRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     current_user.has_purchased = True
-    if current_user.purchase_expires and current_user.purchase_expires > datetime.utcnow():
+    if current_user.purchase_expires and current_user.purchase_expires > datetime.now():
         current_user.purchase_expires = current_user.purchase_expires + timedelta(days=purchase_data.days)
     else:
-        current_user.purchase_expires = datetime.utcnow() + timedelta(days=purchase_data.days)
+        current_user.purchase_expires = datetime.now() + timedelta(days=purchase_data.days)
     db.commit()
-    days_remaining = (current_user.purchase_expires - datetime.utcnow()).days
+    days_remaining = (current_user.purchase_expires - datetime.now()).days
     return {
         "msg": "购买成功",
         "has_purchased": current_user.has_purchased,
@@ -348,7 +407,7 @@ async def purchase_status(current_user: User = Depends(get_current_user), db: Se
         purchase_expired = check_purchase_expiration(current_user, db)
         days_remaining = 0
         if current_user.has_purchased and current_user.purchase_expires:
-            delta = current_user.purchase_expires - datetime.utcnow()
+            delta = current_user.purchase_expires - datetime.now()
             days_remaining = delta.days if delta.days > 0 else 0
         return {
             "has_purchased": bool(current_user.has_purchased),
@@ -362,7 +421,7 @@ async def purchase_status(current_user: User = Depends(get_current_user), db: Se
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 @app.get("/user/info")
 async def get_user_info(current_user: User = Depends(get_current_user)):
@@ -381,27 +440,28 @@ async def get_user_info(current_user: User = Depends(get_current_user)):
 
 # ✅ 修复服务WebSocket端点 - 重启Docker容器
 @app.websocket("/fix")
-async def fix_service(websocket: WebSocket, db: Session = Depends(get_db)):
-    """修复用户服务的WebSocket端点 - 重启用户的Docker容器（所有容器在10.10.10.227上）"""
+async def fix_service(websocket: WebSocket):
+    """修复用户服务的WebSocket端点 - 重启用户的Docker容器（不持有数据库连接）"""
     await websocket.accept()
-    
+
     try:
-        # 🔥 第一步：验证用户身份（使用缓存，快速验证）
+        # 🔥 第一步：验证用户身份（使用缓存，快速验证后立即释放数据库连接）
         cookie_header = websocket.headers.get("cookie", "")
         cookies = {kv.split("=")[0]: kv.split("=")[1] for kv in cookie_header.split("; ") if "=" in kv}
         token = cookies.get("access_token")
-        
+
         if not token:
             await websocket.send_text("❌ 认证失败：缺少访问令牌")
             await websocket.close()
             return
-        
-        # 使用缓存获取用户信息，避免长时间持有数据库连接
-        user_data = await get_current_user_from_token(token, db)
-        if not user_data:
-            await websocket.send_text("❌ 认证失败：无效的访问令牌")
-            await websocket.close()
-            return
+
+        # 使用上下文管理器获取用户信息，验证后立即释放数据库连接
+        async with get_db_context() as db:
+            user_data = await get_current_user_from_token(token, db)
+            if not user_data:
+                await websocket.send_text("❌ 认证失败：无效的访问令牌")
+                await websocket.close()
+                return
         
         user_id = user_data['id']
         user_email = user_data['email']
@@ -586,3 +646,60 @@ async def reconnect_service(request: Request, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"重连服务时发生错误: {str(e)}", exc_info=True)
+
+def cleanup_expired_cache():
+    """清理过期的用户缓存（超过15分钟）"""
+    try:
+        current_time = datetime.now()
+        expired_keys = []
+
+        for cache_key, (cached_user, cache_time) in user_cache.items():
+            # 如果缓存超过15分钟，标记为过期
+            if (current_time - cache_time).seconds >= 900:
+                expired_keys.append(cache_key)
+
+        # 删除过期缓存
+        for key in expired_keys:
+            del user_cache[key]
+
+        if expired_keys:
+            logger.info(f"缓存清理完成：删除了 {len(expired_keys)} 个过期缓存条目")
+    except Exception as e:
+        logger.error(f"缓存清理失败: {e}")
+
+# ✅ 应用生命周期事件:启动定时任务
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化定时任务"""
+    # 添加定时任务:每1小时检查一次用户过期状态
+    scheduler.add_job(
+        check_all_users_expiration,
+        'interval',
+        hours=1,  # 每1小时执行一次
+        id='check_expiration',
+        name='检查用户购买过期状态',
+        replace_existing=True
+    )
+
+    # 添加缓存清理定时任务:每30分钟清理一次过期缓存
+    scheduler.add_job(
+        cleanup_expired_cache,
+        'interval',
+        minutes=30,
+        id='cleanup_cache',
+        name='清理过期用户缓存',
+        replace_existing=True
+    )
+
+    scheduler.start()
+    logger.info("✅ 定时任务调度器已启动:每1小时检查用户过期状态，每30分钟清理过期缓存")
+
+    # 启动时立即执行一次检查
+    check_all_users_expiration()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理资源"""
+    scheduler.shutdown()
+    user_cache.clear()
+    logger.info("定时任务调度器已关闭，缓存已清理")
