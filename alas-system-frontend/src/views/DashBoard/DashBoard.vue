@@ -5,6 +5,28 @@
       <p class="welcome-text">欢迎回来，指挥官</p>
     </div>
 
+    <!-- 系统公告横幅 -->
+    <el-alert
+      v-if="announcement"
+      :title="announcement.title"
+      :description="announcement.content"
+      type="info"
+      :closable="true"
+      show-icon
+      style="margin-bottom: 20px;"
+    />
+
+    <!-- 维护模式提示 -->
+    <el-alert
+      v-if="systemStatus.is_maintenance"
+      title="系统维护中"
+      :description="systemStatus.maintenance_message"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 20px;"
+    />
+
     <el-row :gutter="20">
       <el-col :xs="24" :md="10" :lg="8">
         <div class="glass-card super-glass profile-card">
@@ -32,6 +54,9 @@
           </div>
           
           <div class="logout-btn-wrapper">
+            <el-button type="primary" plain round style="width: 100%; margin-bottom: 10px" @click="goToAdmin">
+              管理面板
+            </el-button>
             <el-button type="danger" plain round style="width: 100%" @click="logout" :icon="SwitchButton">
               退出登录
             </el-button>
@@ -104,6 +129,12 @@ const purchaseStatus = reactive({
   days_remaining: 0
 })
 
+const announcement = ref(null)
+const systemStatus = reactive({
+  is_maintenance: false,
+  maintenance_message: ''
+})
+
 // 初始化逻辑 (保持原有逻辑不变，转为 Composition API 写法)
 const initUser = async () => {
   try {
@@ -140,10 +171,39 @@ const formatDate = (dateStr) => {
   return new Date(dateStr).toLocaleDateString()
 }
 
+// 获取公告
+const getAnnouncement = async () => {
+  try {
+    const res = await userService.getLatestAnnouncement()
+    if (res.ok && res.data) {
+      announcement.value = res.data
+    }
+  } catch (err) {
+    console.error('获取公告失败:', err)
+  }
+}
+
+// 获取系统状态
+const getSystemStatus = async () => {
+  try {
+    const res = await userService.getSystemStatus()
+    if (res.ok && res.data) {
+      Object.assign(systemStatus, res.data)
+    }
+  } catch (err) {
+    console.error('获取系统状态失败:', err)
+  }
+}
+
 // 动作函数
 const checkAuth = () => {
   if (!purchaseStatus.has_purchased) {
     ElMessage.warning('您尚未购买服务')
+    return false
+  }
+  // 检查维护状态
+  if (systemStatus.is_maintenance) {
+    ElMessage.warning(systemStatus.maintenance_message || '系统维护中，请稍后再试')
     return false
   }
   return true
@@ -189,9 +249,15 @@ const logout = async () => {
   router.replace('/login')
 }
 
+const goToAdmin = () => {
+  router.push('/admin')
+}
+
 onMounted(() => {
   initUser()
   getPurchaseStatus()
+  getAnnouncement()
+  getSystemStatus()
 })
 </script>
 

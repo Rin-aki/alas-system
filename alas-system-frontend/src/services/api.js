@@ -99,5 +99,39 @@ export const userService = {
       method: 'POST',
       credentials: 'include'  // 需要认证请求也要加
     });
+  },
+
+  // 获取最新公告
+  getLatestAnnouncement: () => {
+    return apiRequest('/announcement/latest', {
+      method: 'GET',
+      credentials: 'include'
+    });
+  },
+
+  // 获取系统维护状态
+  getSystemStatus: () => {
+    return apiRequest('/system/status', {
+      method: 'GET',
+      credentials: 'include'
+    });
+  },
+
+  // 发布公告 (管理员)
+  createAnnouncement: (announcementData) => {
+    return apiRequest('/admin/announcement', {
+      method: 'POST',
+      body: JSON.stringify(announcementData),
+      credentials: 'include'
+    });
+  },
+
+  // 更新维护状态 (管理员)
+  updateMaintenance: (maintenanceData) => {
+    return apiRequest('/admin/maintenance', {
+      method: 'POST',
+      body: JSON.stringify(maintenanceData),
+      credentials: 'include'
+    });
   }
 };

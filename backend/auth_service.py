@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@10.10.10.123:3306/DataBase"
+DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@10.10.10.1:3306/DataBase"
 engine = create_engine(
     DATABASE_URL,
     pool_size=10,              # 连接池大小
@@ -86,6 +86,20 @@ class User(Base):
     ws_ip = Column(Integer, nullable=True)
     server_ip = Column(Integer, nullable=True)
 
+class Announcement(Base):
+    __tablename__ = "announcement"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+    is_active = Column(Boolean, default=True)
+
+class SystemStatus(Base):
+    __tablename__ = "system_status"
+    id = Column(Integer, primary_key=True, default=1)
+    is_maintenance = Column(Boolean, default=False)
+    maintenance_message = Column(String(500), default="系统维护中，请稍后再试")
+
 Base.metadata.create_all(bind=engine)
 
 class UserRegister(BaseModel):
@@ -102,6 +116,14 @@ class PurchaseRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+class AnnouncementCreate(BaseModel):
+    title: str
+    content: str
+
+class MaintenanceUpdate(BaseModel):
+    is_maintenance: bool
+    maintenance_message: str = "系统维护中，请稍后再试"
 
 def get_db():
     db = SessionLocal()
@@ -215,7 +237,7 @@ def allocate_unique_ips(db: Session) -> tuple:
     
     # IP范围30-99
     available_ips = []
-    for ip in range(30, 100):
+    for ip in range(30, 119):
         if ip not in used_ips:
             available_ips.append(ip)
     
@@ -703,3 +725,98 @@ async def shutdown_event():
     scheduler.shutdown()
     user_cache.clear()
     logger.info("定时任务调度器已关闭，缓存已清理")
+
+# ==================== 公告管理API ====================
+
+@app.get("/announcement/latest")
+async def get_latest_announcement(db: Session = Depends(get_db)):
+    """获取最新的活跃公告"""
+    announcement = db.query(Announcement).filter(
+        Announcement.is_active == True
+    ).order_by(Announcement.created_at.desc()).first()
+
+    if announcement:
+        return {
+            "id": announcement.id,
+            "title": announcement.title,
+            "content": announcement.content,
+            "created_at": announcement.created_at.isoformat()
+        }
+    return None
+
+@app.post("/admin/announcement")
+async def create_announcement(
+    announcement_data: AnnouncementCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """创建新公告 (管理员功能)"""
+    # 简单的管理员检查 - 可以根据需要添加is_admin字段
+    # 这里暂时允许所有认证用户创建公告
+
+    # 将之前的公告设为不活跃
+    db.query(Announcement).filter(Announcement.is_active == True).update({"is_active": False})
+
+    # 创建新公告
+    new_announcement = Announcement(
+        title=announcement_data.title,
+        content=announcement_data.content,
+        created_at=datetime.now(),
+        is_active=True
+    )
+    db.add(new_announcement)
+    db.commit()
+    db.refresh(new_announcement)
+
+    return {
+        "success": True,
+        "message": "公告发布成功",
+        "announcement_id": new_announcement.id
+    }
+
+# ==================== 系统维护状态API ====================
+
+@app.get("/system/status")
+async def get_system_status(db: Session = Depends(get_db)):
+    """获取系统维护状态"""
+    status = db.query(SystemStatus).filter(SystemStatus.id == 1).first()
+
+    if not status:
+        # 如果不存在，创建默认状态
+        status = SystemStatus(id=1, is_maintenance=False)
+        db.add(status)
+        db.commit()
+        db.refresh(status)
+
+    return {
+        "is_maintenance": status.is_maintenance,
+        "maintenance_message": status.maintenance_message
+    }
+
+@app.post("/admin/maintenance")
+async def update_maintenance_status(
+    maintenance_data: MaintenanceUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """更新系统维护状态 (管理员功能)"""
+    status = db.query(SystemStatus).filter(SystemStatus.id == 1).first()
+
+    if not status:
+        status = SystemStatus(
+            id=1,
+            is_maintenance=maintenance_data.is_maintenance,
+            maintenance_message=maintenance_data.maintenance_message
+        )
+        db.add(status)
+    else:
+        status.is_maintenance = maintenance_data.is_maintenance
+        status.maintenance_message = maintenance_data.maintenance_message
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "维护状态更新成功",
+        "is_maintenance": status.is_maintenance
+    }
