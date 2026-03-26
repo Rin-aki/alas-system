@@ -135,3 +135,59 @@ export const userService = {
     });
   }
 };
+
+/**
+ * 管理员API服务
+ */
+export const adminService = {
+  // 管理员登录
+  login: (credentials) => {
+    return apiRequest('/admin/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+      credentials: 'include'
+    });
+  },
+
+  // 管理员登出
+  logout: () => {
+    return apiRequest('/admin/logout', {
+      method: 'POST',
+      credentials: 'include'
+    });
+  },
+
+  // 检查管理员认证状态
+  checkAuth: () => {
+    return apiRequest('/admin/check', {
+      method: 'GET',
+      credentials: 'include'
+    });
+  },
+
+  // 发布公告
+  createAnnouncement: (announcementData) => {
+    return apiRequest('/admin/announcement', {
+      method: 'POST',
+      body: JSON.stringify(announcementData),
+      credentials: 'include'
+    });
+  },
+
+  // 更新维护状态
+  updateMaintenance: (maintenanceData) => {
+    return apiRequest('/admin/maintenance', {
+      method: 'POST',
+      body: JSON.stringify(maintenanceData),
+      credentials: 'include'
+    });
+  },
+
+  // 获取系统状态
+  getSystemStatus: () => {
+    return apiRequest('/system/status', {
+      method: 'GET',
+      credentials: 'include'
+    });
+  }
+};

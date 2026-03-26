@@ -77,9 +77,9 @@
       </el-col>
     </el-row>
 
-    <!-- 返回按钮 -->
-    <div style="margin-top: 20px;">
-      <el-button @click="goBack">返回控制台</el-button>
+    <!-- 返回和登出按钮 -->
+    <div style="margin-top: 20px; display: flex; gap: 10px;">
+      <el-button @click="logout" type="danger">退出登录</el-button>
     </div>
   </div>
 </template>
@@ -88,7 +88,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { userService } from '../../services/api.js'
+import { adminService } from '../../services/api.js'
 
 const router = useRouter()
 const publishing = ref(false)
@@ -113,7 +113,7 @@ const publishAnnouncement = async () => {
 
   publishing.value = true
   try {
-    const res = await userService.createAnnouncement({
+    const res = await adminService.createAnnouncement({
       title: announcementForm.title,
       content: announcementForm.content
     })
@@ -137,7 +137,7 @@ const publishAnnouncement = async () => {
 const updateMaintenance = async () => {
   updating.value = true
   try {
-    const res = await userService.updateMaintenance({
+    const res = await adminService.updateMaintenance({
       is_maintenance: maintenanceForm.is_maintenance,
       maintenance_message: maintenanceForm.maintenance_message
     })
@@ -158,7 +158,7 @@ const updateMaintenance = async () => {
 // 获取当前维护状态
 const loadCurrentStatus = async () => {
   try {
-    const res = await userService.getSystemStatus()
+    const res = await adminService.getSystemStatus()
     if (res.ok && res.data) {
       Object.assign(maintenanceForm, res.data)
     }
@@ -167,8 +167,16 @@ const loadCurrentStatus = async () => {
   }
 }
 
-const goBack = () => {
-  router.push('/dashboard')
+// 管理员登出
+const logout = async () => {
+  try {
+    await adminService.logout()
+    ElMessage.success('已退出登录')
+    router.push('/admin-login')
+  } catch (err) {
+    console.error('登出失败:', err)
+    router.push('/admin-login')
+  }
 }
 
 onMounted(() => {

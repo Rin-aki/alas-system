@@ -54,9 +54,6 @@
           </div>
           
           <div class="logout-btn-wrapper">
-            <el-button type="primary" plain round style="width: 100%; margin-bottom: 10px" @click="goToAdmin">
-              管理面板
-            </el-button>
             <el-button type="danger" plain round style="width: 100%" @click="logout" :icon="SwitchButton">
               退出登录
             </el-button>
@@ -247,10 +244,6 @@ const logout = async () => {
     await userService.logout()
   } catch (e) { console.log(e) }
   router.replace('/login')
-}
-
-const goToAdmin = () => {
-  router.push('/admin')
 }
 
 onMounted(() => {

@@ -21,6 +21,8 @@ services:
       - ./backend:/app
     environment:
       - TZ=Asia/Shanghai
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=lpfH5a3h78
     restart: unless-stopped
 
   proxy-service:

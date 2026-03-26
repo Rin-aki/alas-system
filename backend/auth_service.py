@@ -65,6 +65,13 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
 
+# 管理员认证配置（从环境变量读取）
+import os
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")  # 默认密码，生产环境必须通过环境变量设置
+ADMIN_SECRET_KEY = "admin_lpfH5a3h78"  # 管理员JWT使用独立的密钥
+ADMIN_TOKEN_EXPIRE_MINUTES = 60  # 管理员token有效期60分钟
+
 # 服务器SSH配置
 SSH_HOST = "10.10.10."
 SSH_USER = "root"
@@ -125,6 +132,10 @@ class MaintenanceUpdate(BaseModel):
     is_maintenance: bool
     maintenance_message: str = "系统维护中，请稍后再试"
 
+class AdminLogin(BaseModel):
+    username: str
+    password: str
+
 def get_db():
     db = SessionLocal()
     try:
@@ -170,6 +181,23 @@ async def get_current_user(access_token: str = Cookie(None), db: Session = Depen
     if user is None:
         raise credentials_exception
     return user
+
+async def get_current_admin(admin_token: str = Cookie(None)):
+    """验证管理员身份的依赖函数"""
+    credentials_exception = HTTPException(
+        status_code=403,
+        detail="需要管理员权限",
+    )
+    if admin_token is None:
+        raise credentials_exception
+    try:
+        payload = jwt.decode(admin_token, ADMIN_SECRET_KEY, algorithms=[ALGORITHM])
+        role = payload.get("role")
+        if role != "admin":
+            raise credentials_exception
+        return {"role": "admin", "sub": payload.get("sub")}
+    except JWTError:
+        raise credentials_exception
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -422,6 +450,65 @@ async def auth_check(request: Request):
 def logout(response: Response):
     response.delete_cookie(key="access_token", path="/",domain=".gjiang.xyz", samesite="none", secure=True)
     return {"msg": "已登出"}
+
+# ==================== 管理员认证API ====================
+
+@app.post("/admin/login")
+async def admin_login(admin_data: AdminLogin):
+    """管理员登录接口 - 使用环境变量中的用户名密码"""
+    if admin_data.username != ADMIN_USERNAME or admin_data.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    # 创建管理员token，使用独立的密钥和sub标识
+    access_token_expires = timedelta(minutes=ADMIN_TOKEN_EXPIRE_MINUTES)
+    access_token = jwt.encode(
+        {
+            "sub": "admin",
+            "role": "admin",
+            "exp": datetime.now() + access_token_expires
+        },
+        ADMIN_SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+    response = JSONResponse(content={
+        "msg": "管理员登录成功",
+        "token_type": "bearer"
+    })
+    response.set_cookie(
+        key="admin_token",
+        value=access_token,
+        httponly=True,
+        domain=".gjiang.xyz",
+        max_age=ADMIN_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="none",
+        secure=True
+    )
+    return response
+
+@app.post("/admin/logout")
+def admin_logout(response: Response):
+    """管理员登出"""
+    response.delete_cookie(key="admin_token", path="/", domain=".gjiang.xyz", samesite="none", secure=True)
+    return {"msg": "管理员已登出"}
+
+@app.get("/admin/check")
+async def admin_check(request: Request):
+    """检查管理员认证状态"""
+    token = request.cookies.get("admin_token")
+    if not token:
+        return JSONResponse(content={"is_admin": False})
+    try:
+        payload = jwt.decode(token, ADMIN_SECRET_KEY, algorithms=[ALGORITHM])
+        role = payload.get("role")
+        if role != "admin":
+            raise JWTError("Invalid role")
+        return JSONResponse(content={
+            "is_admin": True,
+            "expires_at": payload.get("exp")
+        })
+    except JWTError:
+        return JSONResponse(content={"is_admin": False})
 
 @app.get("/purchase/status")
 async def purchase_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -747,13 +834,10 @@ async def get_latest_announcement(db: Session = Depends(get_db)):
 @app.post("/admin/announcement")
 async def create_announcement(
     announcement_data: AnnouncementCreate,
-    current_user: User = Depends(get_current_user),
+    _: dict = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """创建新公告 (管理员功能)"""
-    # 简单的管理员检查 - 可以根据需要添加is_admin字段
-    # 这里暂时允许所有认证用户创建公告
-
+    """创建新公告 (仅限管理员)"""
     # 将之前的公告设为不活跃
     db.query(Announcement).filter(Announcement.is_active == True).update({"is_active": False})
 
@@ -796,10 +880,10 @@ async def get_system_status(db: Session = Depends(get_db)):
 @app.post("/admin/maintenance")
 async def update_maintenance_status(
     maintenance_data: MaintenanceUpdate,
-    current_user: User = Depends(get_current_user),
+    _: dict = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """更新系统维护状态 (管理员功能)"""
+    """更新系统维护状态 (仅限管理员)"""
     status = db.query(SystemStatus).filter(SystemStatus.id == 1).first()
 
     if not status:
