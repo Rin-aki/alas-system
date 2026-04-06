@@ -30,7 +30,8 @@ app.add_middleware(
 )
 
 
-DATABASE_URL = "mysql+pymysql://guojiang:lpfH5a3h78@MySQL/DataBase"
+import os
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://guojiang:lpfH5a3h78@10.10.10.1:3306/DataBase")
 engine = create_engine(
     DATABASE_URL,
     pool_size=10,              # 🔥 从10增加到50

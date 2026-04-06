@@ -1,0 +1,50 @@
+version: "3.8"
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: alas-system-frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_WS_FIX_URL: ${VITE_WS_FIX_URL}
+        VITE_SCRCPY_BASE_URL: ${VITE_SCRCPY_BASE_URL}
+        VITE_ALAS_BASE_URL: ${VITE_ALAS_BASE_URL}
+    ports:
+      - "4173:4173"
+    depends_on:
+      - auth-service
+      - proxy-service
+    restart: always
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: backend-springboot/Dockerfile
+    ports:
+      - "6200:6200"
+    environment:
+      - TZ=Asia/Shanghai
+      - DB_URL=${DB_URL}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - USER_JWT_SECRET=${USER_JWT_SECRET}
+      - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET}
+    restart: always
+
+  proxy-service:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.proxy
+    ports:
+      - "6300:6300"
+    environment:
+      - TZ=Asia/Shanghai
+      - DATABASE_URL=${PROXY_DATABASE_URL}
+    restart: always
+    depends_on:
+      - auth-service

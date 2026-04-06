@@ -1,0 +1,16 @@
+[Unit]
+Description=Alas System Auto Update and Start
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/alas-system
+Environment=COMPOSE_FILE=docker-compose.prod.yml
+EnvironmentFile=-/opt/alas-system/.env.prod
+ExecStart=/opt/alas-system/scripts/start-with-update.sh
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -132,6 +132,9 @@ const systemStatus = reactive({
   maintenance_message: ''
 })
 
+const SCRCPY_BASE_URL = import.meta.env.VITE_SCRCPY_BASE_URL || 'http://localhost:6300/'
+const ALAS_BASE_URL = import.meta.env.VITE_ALAS_BASE_URL || 'http://localhost:6300/'
+
 // 初始化逻辑 (保持原有逻辑不变，转为 Composition API 写法)
 const initUser = async () => {
   try {
@@ -208,12 +211,12 @@ const checkAuth = () => {
 
 const linkblhx = () => {
   if (!checkAuth()) return
-  window.location.href = `https://scrcpy.gjiang.xyz:58000/`
+  window.location.href = SCRCPY_BASE_URL
 }
 
 const linkalas = () => {
   if (!checkAuth()) return
-  window.location.href = `https://alas.gjiang.xyz:58000/`
+  window.location.href = ALAS_BASE_URL
 }
 
 const fix = () => {

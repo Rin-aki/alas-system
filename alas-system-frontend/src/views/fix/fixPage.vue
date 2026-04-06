@@ -85,7 +85,7 @@ const appendLog = (msg) => {
 
 onMounted(() => {
   // 初始化 WebSocket
-  const wsUrl = import.meta.env.VITE_WS_FIX_URL || 'wss://api.gjiang.xyz:58000/fix'
+  const wsUrl = import.meta.env.VITE_WS_FIX_URL || 'ws://localhost:6200/fix'
   
   try {
     ws.value = new WebSocket(wsUrl)

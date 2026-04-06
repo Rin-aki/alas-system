@@ -1,0 +1,39 @@
+server:
+  port: ${SERVER_PORT:6200}
+
+spring:
+  application:
+    name: alas-auth-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://10.10.10.1:3306/DataBase?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+    username: ${DB_USER:guojiang}
+    password: ${DB_PASSWORD:lpfH5a3h78}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+
+app:
+  jwt:
+    user-secret: ${USER_JWT_SECRET:lpfH5a3h78}
+    admin-secret: ${ADMIN_JWT_SECRET:admin_lpfH5a3h78}
+    algorithm: HS256
+    user-expire-minutes: 30
+    admin-expire-minutes: 60
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:admin123}
+  cookie:
+    domain: ${COOKIE_DOMAIN:.gjiang.xyz}
+    secure: ${COOKIE_SECURE:true}
+  network:
+    ssh-host-prefix: ${SSH_HOST_PREFIX:10.10.10.}
+    ssh-user: ${SSH_USER:root}
+    ssh-password: ${SSH_PASSWORD:lpfH5a3h78}
+
+logging:
+  level:
+    root: INFO
