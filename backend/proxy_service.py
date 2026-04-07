@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # 反向代理服务 - 修复WebSocket数据库连接问题
 import asyncio
+import base64
 import websockets
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, WebSocket, Request, Depends
@@ -48,6 +49,23 @@ Base = declarative_base()
 SECRET_KEY = "lpfH5a3h78"
 ALGORITHM = "HS256"
 
+def resolve_jwt_signing_key(secret: str) -> bytes:
+    """Mirror the Spring Boot JwtService key derivation so tokens validate consistently."""
+    try:
+        decoded = base64.b64decode(secret, validate=True)
+        if len(decoded) >= 32:
+            return decoded
+    except Exception:
+        pass
+
+    raw = secret.encode("utf-8")
+    key = bytearray(32)
+    for index in range(32):
+        key[index] = raw[index % len(raw)]
+    return bytes(key)
+
+JWT_SIGNING_KEY = resolve_jwt_signing_key(SECRET_KEY)
+
 class User(Base):
     __tablename__ = "user"
     id = Column(Integer, primary_key=True, index=True)
@@ -82,13 +100,46 @@ async def get_db_context():
 # ✅ 关键修复2: 增加缓存时间，减少数据库查询
 user_cache = {}
 
+def split_service_path(raw_path: str) -> tuple[Optional[str], str]:
+    normalized = raw_path.strip("/")
+    if not normalized:
+        return None, ""
+
+    first_segment, _, remainder = normalized.partition("/")
+    if first_segment in {"scrcpy", "alas"}:
+        return first_segment, remainder
+
+    return None, normalized
+
+def resolve_target_service(host: str, request: Request | None = None, websocket: WebSocket | None = None, path: str = "") -> Optional[str]:
+    host_lower = host.lower()
+    if "scrcpy" in host_lower:
+        return "scrcpy"
+    if "alas" in host_lower:
+        return "alas"
+
+    service_from_path, _ = split_service_path(path)
+    if service_from_path:
+        return service_from_path
+
+    service = None
+    if request is not None:
+        service = request.query_params.get("service")
+    elif websocket is not None:
+        service = websocket.query_params.get("service")
+
+    if service in {"scrcpy", "alas"}:
+        return service
+
+    return None
+
 async def get_current_user_from_token(access_token: str) -> Optional[dict]:
     """从token获取用户信息，带缓存优化"""
     if not access_token:
         return None
     
     try:
-        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(access_token, JWT_SIGNING_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if not user_id:
             return None
@@ -218,8 +269,8 @@ async def ensure_purchase_valid(user_id: int) -> bool:
         return False
 
 # ✅ 关键修复4: WebSocket代理中不持有数据库连接
-@app.websocket("/")
-async def proxy_ws(websocket: WebSocket):
+@app.websocket("/{path:path}")
+async def proxy_ws(websocket: WebSocket, path: str):
     """WebSocket代理，完全不持有数据库连接"""
     await websocket.accept()
     closed = False
@@ -256,22 +307,30 @@ async def proxy_ws(websocket: WebSocket):
 
         # 确定目标服务
         host = websocket.headers.get("host", "")
-        query_params = websocket.query_params
-        query_string = urlencode(query_params)
+        _, proxied_path = split_service_path(path)
+        query_params = list(websocket.query_params.multi_items())
+        filtered_query_params = [(key, value) for key, value in query_params if key != "service"]
 
-        if "scrcpy" in host:
+        service = resolve_target_service(host, websocket=websocket, path=path)
+        query_string = urlencode(filtered_query_params)
+        target_ws_path = f"/{proxied_path}" if proxied_path else "/"
+
+        if service == "scrcpy":
             use_bytes = True
-            target_ws_url = f"ws://10.10.10.{user_data['ws_ip']}:8000/?{query_string}"
+            target_ws_url = f"ws://10.10.10.{user_data['ws_ip']}:8000{target_ws_path}"
             logger.info(f"代理到scrcpy: {target_ws_url}")
-        elif "alas" in host:
+        elif service == "alas":
             use_bytes = False
-            target_ws_url = f"ws://10.10.10.{user_data['alas_ip']}:22267/?{query_string}"
+            target_ws_url = f"ws://10.10.10.{user_data['alas_ip']}:22267{target_ws_path}"
             logger.info(f"代理到alas: {target_ws_url}")
         else:
-            logger.warning(f"未知的服务域名: {host}")
+            logger.warning(f"未知的服务类型: host={host}, query={dict(websocket.query_params)}")
             closed = True
             await websocket.close()
             return
+
+        if query_string:
+            target_ws_url = f"{target_ws_url}?{query_string}"
 
         # 构建额外头部
         additional_headers = {
@@ -391,14 +450,16 @@ async def proxy_http(path: str, request: Request):
             raise HTTPException(status_code=403, detail="服务已过期或未购买")
         
         host = request.headers.get("host", "")
-        if "scrcpy" in host:
-            target_url = f"http://10.10.10.{user_data['ws_ip']}:8000/{path}"
+        service, proxied_path = split_service_path(path)
+        service = resolve_target_service(host, request=request, path=path)
+        if service == "scrcpy":
+            target_url = f"http://10.10.10.{user_data['ws_ip']}:8000/{proxied_path}"
             target_host = f"10.10.10.{user_data['ws_ip']}:8000"
-        elif "alas" in host:
-            target_url = f"http://10.10.10.{user_data['alas_ip']}:22267/{path}"
+        elif service == "alas":
+            target_url = f"http://10.10.10.{user_data['alas_ip']}:22267/{proxied_path}"
             target_host = f"10.10.10.{user_data['alas_ip']}:22267"
         else:
-            raise HTTPException(status_code=404, detail="未知的服务域名")
+            raise HTTPException(status_code=404, detail="未知的服务类型")
         
         logger.info(f"代理请求: {request.method} {request.url} -> {target_url}")
         
@@ -415,7 +476,7 @@ async def proxy_http(path: str, request: Request):
                 url=target_url,
                 headers=forward_headers,
                 content=body,
-                params=dict(request.query_params)
+                params={k: v for k, v in request.query_params.items() if k != "service"}
             ) as proxied_response:
                 content_chunks = []
                 async for chunk in proxied_response.aiter_bytes():

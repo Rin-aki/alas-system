@@ -109,7 +109,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Monitor, Setting, Refresh, FirstAidKit, SwitchButton } from '@element-plus/icons-vue'
-import { userService } from '../../services/api.js'
+import { resolveRuntimeUrl, userService } from '../../services/api.js'
 
 const router = useRouter()
 const loading = ref(false)
@@ -132,21 +132,25 @@ const systemStatus = reactive({
   maintenance_message: ''
 })
 
-const SCRCPY_BASE_URL = import.meta.env.VITE_SCRCPY_BASE_URL || 'http://localhost:6300/'
-const ALAS_BASE_URL = import.meta.env.VITE_ALAS_BASE_URL || 'http://localhost:6300/'
+const SCRCPY_BASE_URL = resolveRuntimeUrl(import.meta.env.VITE_SCRCPY_BASE_URL || 'http://localhost:6300/', { service: 'scrcpy' })
+const ALAS_BASE_URL = resolveRuntimeUrl(import.meta.env.VITE_ALAS_BASE_URL || 'http://localhost:6300/', { service: 'alas' })
 
 // 初始化逻辑 (保持原有逻辑不变，转为 Composition API 写法)
 const initUser = async () => {
   try {
-    const res = await userService.authcheck()
-    if (res.ok) {
-      user.email = localStorage.getItem('email')
-      user.id = localStorage.getItem('user_id')
-    } else {
-      router.push('/login')
+    const res = await userService.getUserInfo()
+    if (!res.ok) {
+      router.replace('/login')
+      return
     }
+
+    user.email = res.data.email ?? ''
+    user.id = res.data.user_id ?? null
+    localStorage.setItem('email', user.email)
+    localStorage.setItem('user_id', user.id ?? '')
+    localStorage.setItem('ip', res.data.alas_ip ?? '')
   } catch {
-    router.push('/login')
+    router.replace('/login')
   }
 }
 

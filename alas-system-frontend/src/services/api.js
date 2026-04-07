@@ -2,10 +2,85 @@
  * API服务 - 处理与后端的通信
  */
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+function isLocalLikeHostname(hostname) {
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || /^10\.10\.10\.\d+$/.test(hostname)
+}
+
+function resolveBaseUrl(rawValue) {
+  const value = (rawValue || '').trim()
+
+  if (!value || typeof window === 'undefined') {
+    return value.replace(/\/$/, '')
+  }
+
+  try {
+    const configuredUrl = new URL(value)
+    const currentUrl = new URL(window.location.href)
+
+    if (isLocalLikeHostname(configuredUrl.hostname) && isLocalLikeHostname(currentUrl.hostname)) {
+      configuredUrl.hostname = currentUrl.hostname
+    }
+
+    return configuredUrl.toString().replace(/\/$/, '')
+  } catch {
+    return value.replace(/\/$/, '')
+  }
+}
+
+const API_BASE_URL = resolveBaseUrl(import.meta.env.VITE_API_BASE_URL)
+const AUTH_RETRY_DELAY_MS = 150
+const AUTH_RETRY_ATTEMPTS = 3
 
 if (!API_BASE_URL) {
   console.warn('VITE_API_BASE_URL 未设置，API 请求将使用相对路径。')
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+export function resolveRuntimeUrl(rawValue, options = {}) {
+  const value = (rawValue || '').trim()
+
+  if (!value || typeof window === 'undefined') {
+    return value
+  }
+
+  try {
+    const configuredUrl = new URL(value)
+    const currentUrl = new URL(window.location.href)
+
+    if (isLocalLikeHostname(configuredUrl.hostname) && isLocalLikeHostname(currentUrl.hostname)) {
+      configuredUrl.hostname = currentUrl.hostname
+    }
+
+    if (options.service && isLocalLikeHostname(configuredUrl.hostname)) {
+      const normalizedPath = configuredUrl.pathname.replace(/\/+$/, '')
+      configuredUrl.pathname = `${normalizedPath}/${options.service}/`
+      configuredUrl.searchParams.delete('service')
+    }
+
+    return configuredUrl.toString()
+  } catch {
+    return value
+  }
+}
+
+async function waitForAuthState(request, key) {
+  for (let attempt = 0; attempt < AUTH_RETRY_ATTEMPTS; attempt += 1) {
+    const response = await request()
+    const isAuthenticated = response.ok && response.data?.[key] === true
+
+    if (isAuthenticated) {
+      return true
+    }
+
+    if (attempt < AUTH_RETRY_ATTEMPTS - 1) {
+      await sleep(AUTH_RETRY_DELAY_MS)
+    }
+  }
+
+  return false
 }
 
 /**
@@ -82,9 +157,23 @@ export const userService = {
     })
   },
 
+  isAuthenticated: async () => {
+    const response = await userService.authcheck()
+    return response.ok && response.data?.is_authenticated === true
+  },
+
+  waitForSession: () => waitForAuthState(() => userService.authcheck(), 'is_authenticated'),
+
   logout: () => {
     return apiRequest('/logout', {
       method: 'POST',
+      credentials: 'include'
+    })
+  },
+
+  getUserInfo: () => {
+    return apiRequest('/user/info', {
+      method: 'GET',
       credentials: 'include'
     })
   },
@@ -149,6 +238,13 @@ export const adminService = {
       credentials: 'include'
     })
   },
+
+  isAuthenticated: async () => {
+    const response = await adminService.checkAuth()
+    return response.ok && response.data?.is_admin === true
+  },
+
+  waitForSession: () => waitForAuthState(() => adminService.checkAuth(), 'is_admin'),
 
   createAnnouncement: (announcementData) => {
     return apiRequest('/admin/announcement', {

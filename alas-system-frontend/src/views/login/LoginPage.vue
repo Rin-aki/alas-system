@@ -76,59 +76,65 @@ const rules = {
   ]
 }
 
-// 修复点4：重写提交逻辑
+const persistUserProfile = (profile) => {
+  localStorage.setItem('user_id', profile.user_id ?? '')
+  localStorage.setItem('email', profile.email ?? '')
+  localStorage.setItem('ip', profile.alas_ip ?? '')
+}
+
 const submitForm = async () => {
-  console.log("点击了登录按钮") // 调试日志
-  
-  // 确保表单实例已加载
   if (!loginFormRef.value) {
     console.error("表单实例未找到")
     return
   }
-  
-  // 调用 Element Plus 的验证方法
-  await loginFormRef.value.validate((valid, fields) => {
-    if (valid) {
-      console.log("验证通过，准备发送请求...")
-      isLoading.value = true
-      
-      userService.login({
-        email: ruleForm.email,
-        password: ruleForm.password
-      })
-      .then(response => {
-        console.log("登录响应:", response)
-        if (response.status === 200) {
-          ElMessage.success(response.data.msg || '欢迎回来')
-          // 存储数据
-          localStorage.setItem('user_id', response.data.user_id)
-          localStorage.setItem('email', response.data.email)
-          localStorage.setItem('ip', response.data.ip)
-          
-          // 延迟跳转，让用户看到成功的提示
-          setTimeout(() => {
-             router.push('/dashboard')
-          }, 500)
-        } else if (response.status === 403) {
-           ElMessage.warning(response.data.error || '账户未激活')
-        } else {
-           ElMessage.error(response.data.error || '登录失败')
-        }
-      })
-      .catch(err => {
-        console.error('API错误:', err)
-        ElMessage.error('网络连接异常或服务器错误')
-      })
-      .finally(() => {
-        isLoading.value = false
-      })
-    } else {
-      console.log('表单验证失败', fields)
-      // 验证失败时增加一点震动效果提示（可选）
-      ElMessage.warning('请检查输入项')
-      return false
+
+  try {
+    await loginFormRef.value.validate()
+  } catch (fields) {
+    console.log('表单验证失败', fields)
+    ElMessage.warning('请检查输入项')
+    return
+  }
+
+  isLoading.value = true
+
+  try {
+    const response = await userService.login({
+      email: ruleForm.email,
+      password: ruleForm.password
+    })
+
+    console.log("登录响应:", response)
+
+    if (response.status === 200) {
+      const sessionReady = await userService.waitForSession()
+
+      if (!sessionReady) {
+        ElMessage.error('登录成功，但会话尚未确认，请稍后重试')
+        return
+      }
+
+      const userInfoResponse = await userService.getUserInfo().catch(() => null)
+      const profile = userInfoResponse?.ok ? userInfoResponse.data : response.data
+
+      persistUserProfile(profile)
+      ElMessage.success(response.data.msg || '欢迎回来')
+      await router.replace('/dashboard')
+      return
     }
-  })
+
+    if (response.status === 403) {
+      ElMessage.warning(response.data.error || response.data.detail || '账户未激活')
+      return
+    }
+
+    ElMessage.error(response.data.error || response.data.detail || '登录失败')
+  } catch (err) {
+    console.error('API错误:', err)
+    ElMessage.error('网络连接异常或服务器错误')
+  } finally {
+    isLoading.value = false
+  }
 }
 </script>
 

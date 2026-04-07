@@ -36,8 +36,7 @@ router.beforeEach(async (to, from, next) => {
   if (requiresAdmin) {
     console.info('管理员权限检查');
     try {
-      const adminRes = await adminService.checkAuth();
-      const isAdmin = adminRes.ok && adminRes.data.is_admin;
+      const isAdmin = await adminService.isAuthenticated();
 
       if (!isAdmin) {
         console.info('非管理员，跳转到管理员登录');
@@ -61,8 +60,7 @@ router.beforeEach(async (to, from, next) => {
   if (requiresAuth) {
     console.info('登录状态检查检测');
     try {
-      const res = await userService.authcheck();
-      const isAuthenticated = res.ok && res.data.is_authenticated;
+      const isAuthenticated = await userService.isAuthenticated();
 
       if (!isAuthenticated) {
         console.info('未登录');
@@ -79,8 +77,7 @@ router.beforeEach(async (to, from, next) => {
 
   // 对于不需要认证的页面
   try {
-    const res = await userService.authcheck();
-    const isAuthenticated = res.ok && res.data.is_authenticated;
+    const isAuthenticated = await userService.isAuthenticated();
 
     if (isAuthenticated && (to.path === '/login' || to.path === '/register')) {
       console.info('已登录，跳转到控制台');

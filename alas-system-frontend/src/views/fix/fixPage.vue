@@ -45,6 +45,7 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
+import { resolveRuntimeUrl } from '../../services/api.js'
 
 const router = useRouter()
 const logs = ref([])
@@ -85,7 +86,7 @@ const appendLog = (msg) => {
 
 onMounted(() => {
   // 初始化 WebSocket
-  const wsUrl = import.meta.env.VITE_WS_FIX_URL || 'ws://localhost:6200/fix'
+  const wsUrl = resolveRuntimeUrl(import.meta.env.VITE_WS_FIX_URL || 'ws://localhost:6200/fix')
   
   try {
     ws.value = new WebSocket(wsUrl)

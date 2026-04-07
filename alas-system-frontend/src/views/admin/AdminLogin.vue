@@ -79,40 +79,44 @@ const submitForm = async () => {
     return
   }
 
-  await loginFormRef.value.validate((valid, fields) => {
-    if (valid) {
-      isLoading.value = true
+  try {
+    await loginFormRef.value.validate()
+  } catch (fields) {
+    console.log('表单验证失败', fields)
+    ElMessage.warning('请检查输入项')
+    return
+  }
 
-      adminService.login({
-        username: ruleForm.username,
-        password: ruleForm.password
-      })
-      .then(response => {
-        console.log("管理员登录响应:", response)
-        if (response.ok) {
-          ElMessage.success(response.data.msg || '管理员登录成功')
+  isLoading.value = true
 
-          // 延迟跳转到管理面板
-          setTimeout(() => {
-            router.push('/admin')
-          }, 500)
-        } else {
-          ElMessage.error(response.data.detail || '登录失败，请检查账号密码')
-        }
-      })
-      .catch(err => {
-        console.error('API错误:', err)
-        ElMessage.error('网络连接异常或服务器错误')
-      })
-      .finally(() => {
-        isLoading.value = false
-      })
-    } else {
-      console.log('表单验证失败', fields)
-      ElMessage.warning('请检查输入项')
-      return false
+  try {
+    const response = await adminService.login({
+      username: ruleForm.username,
+      password: ruleForm.password
+    })
+
+    console.log("管理员登录响应:", response)
+
+    if (response.ok) {
+      const sessionReady = await adminService.waitForSession()
+
+      if (!sessionReady) {
+        ElMessage.error('登录成功，但会话尚未确认，请稍后重试')
+        return
+      }
+
+      ElMessage.success(response.data.msg || '管理员登录成功')
+      await router.replace('/admin')
+      return
     }
-  })
+
+    ElMessage.error(response.data.detail || '登录失败，请检查账号密码')
+  } catch (err) {
+    console.error('API错误:', err)
+    ElMessage.error('网络连接异常或服务器错误')
+  } finally {
+    isLoading.value = false
+  }
 }
 </script>
 
