@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import websockets
+from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, WebSocket, Request, Depends
 from fastapi.responses import Response
@@ -267,6 +268,206 @@ async def ensure_purchase_valid(user_id: int) -> bool:
     except Exception as e:
         logger.error(f"检查用户购买状态时发生错误: {e}")
         return False
+
+# ============================================================
+# 设备控制 — scrcpy 流媒体端点
+# ============================================================
+
+SCRCPY_SERVER_JAR = Path(__file__).parent / "scrcpy-server.jar"
+SCRCPY_SERVER_VERSION = "1.19-ws7"
+SCRCPY_DEVICE_PORT = 8886
+
+
+async def _run_adb(*args: str, timeout: float = 15.0) -> tuple[str, str, int]:
+    proc = await asyncio.create_subprocess_exec(
+        "adb", *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return stdout.decode(), stderr.decode(), proc.returncode or 0
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise
+
+
+async def _start_scrcpy_bg(device_udid: str) -> None:
+    """后台任务：在设备上启动 scrcpy 服务（fire-and-forget）。"""
+    cmd = (
+        f"CLASSPATH=/data/local/tmp/scrcpy-server.jar "
+        f"app_process / com.genymobile.scrcpy.Server "
+        f"{SCRCPY_SERVER_VERSION} web ERROR {SCRCPY_DEVICE_PORT} true"
+    )
+    try:
+        await _run_adb("-s", device_udid, "shell", cmd, timeout=300)
+    except Exception as exc:
+        logger.debug(f"scrcpy 服务进程结束: {exc}")
+
+
+async def _wait_scrcpy_ready(device_ip: str, port: int,
+                              max_wait: float = 12.0, interval: float = 0.6) -> bool:
+    """轮询直到 scrcpy WebSocket 可连接。"""
+    deadline = asyncio.get_event_loop().time() + max_wait
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            async with websockets.connect(
+                f"ws://{device_ip}:{port}",
+                open_timeout=1,
+                close_timeout=1,
+            ):
+                return True
+        except Exception:
+            await asyncio.sleep(interval)
+    return False
+
+
+def _auth_from_request(request: Request):
+    return request.cookies.get("access_token")
+
+
+def _auth_from_ws(websocket: WebSocket):
+    cookie_header = websocket.headers.get("cookie", "")
+    cookies = {}
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, _, v = part.partition("=")
+            cookies[k.strip()] = v.strip()
+    return cookies.get("access_token")
+
+
+# ---- HTTP: 启动 scrcpy 会话 ----
+@app.post("/api/device/start")
+async def device_start(request: Request):
+    token = _auth_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少访问令牌")
+    user_data = await get_current_user_from_token(token)
+    if not user_data:
+        raise HTTPException(status_code=401, detail="无效的访问令牌")
+    if not await ensure_purchase_valid(user_data["id"]):
+        raise HTTPException(status_code=403, detail="服务已过期或未购买")
+
+    blhx_ip = user_data.get("blhx_ip")
+    if not blhx_ip:
+        raise HTTPException(status_code=500, detail="用户没有分配 blhx_ip")
+    if not SCRCPY_SERVER_JAR.exists():
+        raise HTTPException(status_code=500, detail="scrcpy-server.jar 不存在")
+
+    device_addr = f"10.10.10.{blhx_ip}"
+    device_udid = f"{device_addr}:5555"
+
+    # 1. ADB 连接
+    out, _, _ = await _run_adb("connect", device_udid, timeout=10)
+    logger.info(f"adb connect {device_udid}: {out.strip()}")
+
+    # 2. 推送 JAR（已存在则跳过）
+    await _run_adb("-s", device_udid, "push",
+                   str(SCRCPY_SERVER_JAR), "/data/local/tmp/scrcpy-server.jar",
+                   timeout=30)
+
+    # 3. 杀掉旧实例
+    await _run_adb("-s", device_udid, "shell", "pkill -f scrcpy-server", timeout=5)
+    await asyncio.sleep(0.3)
+
+    # 4. 后台启动新实例
+    asyncio.create_task(_start_scrcpy_bg(device_udid))
+
+    # 5. 等待 WebSocket 就绪
+    ready = await _wait_scrcpy_ready(device_addr, SCRCPY_DEVICE_PORT)
+    if not ready:
+        raise HTTPException(status_code=504, detail="scrcpy 服务启动超时，请重试")
+
+    return {"status": "ready", "device": device_udid}
+
+
+# ---- HTTP: 停止 scrcpy 会话 ----
+@app.post("/api/device/stop")
+async def device_stop(request: Request):
+    token = _auth_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="缺少访问令牌")
+    user_data = await get_current_user_from_token(token)
+    if not user_data:
+        raise HTTPException(status_code=401, detail="无效的访问令牌")
+
+    blhx_ip = user_data.get("blhx_ip")
+    if blhx_ip:
+        device_udid = f"10.10.10.{blhx_ip}:5555"
+        await _run_adb("-s", device_udid, "shell", "pkill -f scrcpy-server", timeout=5)
+        logger.info(f"scrcpy 已停止: {device_udid}")
+
+    return {"status": "stopped"}
+
+
+# ---- WebSocket: 透明双向桥接浏览器 ↔ 设备 scrcpy ----
+# 代理不解析或转换任何数据；浏览器负责全部 scrcpy 协议处理
+# (解析 scrcpy_initial、发送 TYPE_CHANGE_STREAM_PARAMETERS、解码 H264)
+@app.websocket("/api/device/ws")
+async def device_ws_proxy(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        token = _auth_from_ws(websocket)
+        if not token:
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+
+        user_data = await get_current_user_from_token(token)
+        if not user_data:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+
+        if not await ensure_purchase_valid(user_data["id"]):
+            await websocket.close(code=4003, reason="Purchase expired")
+            return
+
+        blhx_ip = user_data.get("blhx_ip")
+        if not blhx_ip:
+            await websocket.close(code=4004, reason="No blhx_ip")
+            return
+
+        device_url = f"ws://10.10.10.{blhx_ip}:{SCRCPY_DEVICE_PORT}"
+        logger.info(f"[device_ws] 透明代理 {device_url}，用户 {user_data['email']}")
+
+        async with websockets.connect(device_url, max_size=None, open_timeout=5) as dev_ws:
+
+            async def browser_to_device():
+                try:
+                    while True:
+                        msg = await websocket.receive()
+                        if "bytes" in msg and msg["bytes"]:
+                            await dev_ws.send(msg["bytes"])
+                        elif "text" in msg and msg["text"]:
+                            await dev_ws.send(msg["text"])
+                        elif msg.get("type") == "websocket.disconnect":
+                            break
+                except Exception as exc:
+                    logger.debug(f"[device_ws b→d] 结束: {exc}")
+
+            async def device_to_browser():
+                try:
+                    async for frame in dev_ws:
+                        if isinstance(frame, bytes):
+                            await websocket.send_bytes(frame)
+                        else:
+                            await websocket.send_text(frame)
+                except Exception as exc:
+                    logger.debug(f"[device_ws d→b] 结束: {exc}")
+
+            await asyncio.gather(browser_to_device(), device_to_browser())
+
+    except websockets.exceptions.WebSocketException as exc:
+        logger.error(f"[device_ws] 设备 WS 异常: {exc}")
+    except Exception as exc:
+        logger.error(f"[device_ws] 未预期错误: {exc}", exc_info=True)
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
 
 # ✅ 关键修复4: WebSocket代理中不持有数据库连接
 @app.websocket("/{path:path}")

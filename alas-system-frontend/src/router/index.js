@@ -4,6 +4,7 @@ import Login from '../views/login/LoginPage.vue'
 import Register from '../views/register/RegisterPage.vue'
 import Dashboard from '../views/DashBoard/DashBoard.vue'
 import fixPage from '../views/fix/fixPage.vue'
+import DevicePage from '../views/device/DevicePage.vue'
 import AdminLogin from '../views/admin/AdminLogin.vue'
 import AdminPanel from '../views/admin/AdminPanel.vue'
 import { userService, adminService } from '../services/api.js';
@@ -13,6 +14,7 @@ const routes = [
   { path: '/register', name: 'RegisterPage', component: Register, meta: { title: 'AlasMan - 注册', requiresAuth: false } },
   { path: '/dashboard', name: 'Dashboard', component: Dashboard, meta: { title: 'AlasMan - 控制台', requiresAuth: true } },
   { path: '/fix', name: 'fixPage', component: fixPage, meta: { title: 'AlasMan - 疑难修复', requiresAuth: true } },
+  { path: '/device', name: 'DevicePage', component: DevicePage, meta: { title: 'AlasMan - 设备控制', requiresAuth: true } },
   { path: '/admin-login', name: 'AdminLogin', component: AdminLogin, meta: { title: 'AlasMan - 管理员登录', requiresAuth: false, requiresAdmin: false } },
   { path: '/admin', name: 'AdminPanel', component: AdminPanel, meta: { title: 'AlasMan - 管理面板', requiresAuth: false, requiresAdmin: true } }
 ]

@@ -215,7 +215,7 @@ const checkAuth = () => {
 
 const linkblhx = () => {
   if (!checkAuth()) return
-  window.location.href = SCRCPY_BASE_URL
+  router.push('/device')
 }
 
 const linkalas = () => {
