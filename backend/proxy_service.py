@@ -112,27 +112,6 @@ def split_service_path(raw_path: str) -> tuple[Optional[str], str]:
 
     return None, normalized
 
-def resolve_target_service(host: str, request: Request | None = None, websocket: WebSocket | None = None, path: str = "") -> Optional[str]:
-    host_lower = host.lower()
-    if "scrcpy" in host_lower:
-        return "scrcpy"
-    if "alas" in host_lower:
-        return "alas"
-
-    service_from_path, _ = split_service_path(path)
-    if service_from_path:
-        return service_from_path
-
-    service = None
-    if request is not None:
-        service = request.query_params.get("service")
-    elif websocket is not None:
-        service = websocket.query_params.get("service")
-
-    if service in {"scrcpy", "alas"}:
-        return service
-
-    return None
 
 async def get_current_user_from_token(access_token: str) -> Optional[dict]:
     """从token获取用户信息，带缓存优化"""
@@ -511,19 +490,12 @@ async def proxy_ws(websocket: WebSocket, path: str):
         _, proxied_path = split_service_path(path)
         query_params = list(websocket.query_params.multi_items())
         filtered_query_params = [(key, value) for key, value in query_params if key != "service"]
-
-        service = resolve_target_service(host, websocket=websocket, path=path)
         query_string = urlencode(filtered_query_params)
         target_ws_path = f"/{proxied_path}" if proxied_path else "/"
 
-        if service == "alas":
-            target_ws_url = f"ws://10.10.10.{user_data['alas_ip']}:22267{target_ws_path}"
-            logger.info(f"代理到alas: {target_ws_url}")
-        else:
-            logger.warning(f"未知的服务类型: host={host}, query={dict(websocket.query_params)}")
-            closed = True
-            await websocket.close()
-            return
+        target_ws_url = f"ws://10.10.10.{user_data['alas_ip']}:22267{target_ws_path}"
+        logger.info(f"代理到alas: {target_ws_url}")
+
 
         if query_string:
             target_ws_url = f"{target_ws_url}?{query_string}"
@@ -638,15 +610,10 @@ async def proxy_http(path: str, request: Request):
         if not await ensure_purchase_valid(user_data["id"]):
             raise HTTPException(status_code=403, detail="服务已过期或未购买")
         
-        host = request.headers.get("host", "")
         _, proxied_path = split_service_path(path)
-        service = resolve_target_service(host, request=request, path=path)
-        if service == "alas":
-            target_url = f"http://10.10.10.{user_data['alas_ip']}:22267/{proxied_path}"
-            target_host = f"10.10.10.{user_data['alas_ip']}:22267"
-        else:
-            raise HTTPException(status_code=404, detail="未知的服务类型")
-        
+        target_url = f"http://10.10.10.{user_data['alas_ip']}:22267/{proxied_path}"
+        target_host = f"10.10.10.{user_data['alas_ip']}:22267"
+       
         logger.info(f"代理请求: {request.method} {request.url} -> {target_url}")
         
         forward_headers = prepare_proxy_headers(request)
