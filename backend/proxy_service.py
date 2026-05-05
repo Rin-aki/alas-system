@@ -48,7 +48,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 SECRET_KEY = os.getenv("USER_JWT_SECRET", "lpfH5a3h78")
-ALGORITHM = "HS256"
+ALGORITHMS = ["HS256", "HS384", "HS512"]
 
 def resolve_jwt_signing_key(secret: str) -> bytes:
     """Mirror the Spring Boot JwtService key derivation so tokens validate consistently."""
@@ -140,7 +140,7 @@ async def get_current_user_from_token(access_token: str) -> Optional[dict]:
         return None
     
     try:
-        payload = jwt.decode(access_token, JWT_SIGNING_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(access_token, JWT_SIGNING_KEY, algorithms=ALGORITHMS)
         user_id: str = payload.get("sub")
         if not user_id:
             return None
