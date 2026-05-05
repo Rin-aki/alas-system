@@ -385,9 +385,18 @@ async def device_stop(request: Request):
 # (解析 scrcpy_initial、发送 TYPE_CHANGE_STREAM_PARAMETERS、解码 H264)
 @app.websocket("/api/device/ws")
 async def device_ws_proxy(websocket: WebSocket):
+    """
+    WebSocket 代理：连接浏览器与设备的 scrcpy 服务。
+    支持在用户关闭窗口或标签页时自动清理手机端的 scrcpy 进程。
+    """
     await websocket.accept()
+    
+    # 预设变量，确保 finally 块在任何阶段退出都能安全访问
+    blhx_ip = None
+    user_email = "Unknown"
 
     try:
+        # 1. 身份验证与权限检查
         token = _auth_from_ws(websocket)
         if not token:
             await websocket.close(code=4001, reason="Unauthorized")
@@ -398,21 +407,27 @@ async def device_ws_proxy(websocket: WebSocket):
             await websocket.close(code=4001, reason="Invalid token")
             return
 
+        user_email = user_data.get("email", "Unknown")
         if not await ensure_purchase_valid(user_data["id"]):
             await websocket.close(code=4003, reason="Purchase expired")
             return
 
+        # 2. 设备信息准备
         blhx_ip = user_data.get("blhx_ip")
         if not blhx_ip:
             await websocket.close(code=4004, reason="No blhx_ip")
             return
 
-        device_url = f"ws://10.10.10.{blhx_ip}:{SCRCPY_DEVICE_PORT}"
-        logger.info(f"[device_ws] 透明代理 {device_url}，用户 {user_data['email']}")
+        device_addr = f"10.10.10.{blhx_ip}"
+        device_url = f"ws://{device_addr}:{SCRCPY_DEVICE_PORT}"
+        
+        logger.info(f"[device_ws] 开启代理: {device_url} (用户: {user_email})")
 
+        # 3. 建立与设备的 WebSocket 连接
         async with websockets.connect(device_url, max_size=None, open_timeout=5) as dev_ws:
 
             async def browser_to_device():
+                """接收浏览器指令并转发给设备"""
                 try:
                     while True:
                         msg = await websocket.receive()
@@ -420,29 +435,45 @@ async def device_ws_proxy(websocket: WebSocket):
                             await dev_ws.send(msg["bytes"])
                         elif "text" in msg and msg["text"]:
                             await dev_ws.send(msg["text"])
-                        elif msg.get("type") == "websocket.disconnect":
-                            break
-                except Exception as exc:
-                    logger.debug(f"[device_ws b→d] 结束: {exc}")
+                except Exception as e:
+                    logger.debug(f"[device_ws] 浏览器 -> 设备方向断开: {e}")
 
             async def device_to_browser():
+                """接收设备视频流并转发给浏览器"""
                 try:
                     async for frame in dev_ws:
                         if isinstance(frame, bytes):
                             await websocket.send_bytes(frame)
                         else:
                             await websocket.send_text(frame)
-                except Exception as exc:
-                    logger.debug(f"[device_ws d→b] 结束: {exc}")
+                except Exception as e:
+                    logger.debug(f"[device_ws] 设备 -> 浏览器方向断开: {e}")
 
-            await asyncio.gather(browser_to_device(), device_to_browser())
+            # 使用 return_exceptions=True，确保任何一端关闭都能正常触发退出逻辑
+            await asyncio.gather(
+                browser_to_device(), 
+                device_to_browser(), 
+                return_exceptions=True
+            )
 
     except websockets.exceptions.WebSocketException as exc:
-        logger.error(f"[device_ws] 设备 WS 异常: {exc}")
+        logger.error(f"[device_ws] 设备连接异常: {exc}")
     except Exception as exc:
-        logger.error(f"[device_ws] 未预期错误: {exc}", exc_info=True)
+        logger.error(f"[device_ws] 代理运行错误: {exc}", exc_info=True)
     finally:
+        # 4. 清理逻辑：无论用户是正常关闭还是直接关掉标签页，都会执行此处
+        if blhx_ip:
+            device_udid = f"10.10.10.{blhx_ip}:5555"
+            logger.info(f"[device_ws] 正在清理设备资源，停止手机端进程: {device_udid} (用户: {user_email})")
+            
+            # 使用 asyncio.create_task 发起一个“发后即忘”的任务，不阻塞当前 WebSocket 的关闭
+            # 注意：清理进程使用 ADB 端口 5555，而非 scrcpy 的 WS 端口 8886
+            asyncio.create_task(
+                _run_adb("-s", device_udid, "shell", "pkill -f scrcpy-server")
+            )
+        
         try:
+            # 确保服务器端的 WebSocket 会话彻底关闭
             await websocket.close()
         except Exception:
             pass
