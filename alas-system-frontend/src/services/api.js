@@ -267,5 +267,50 @@ export const adminService = {
       method: 'GET',
       credentials: 'include'
     })
+  },
+
+  listUsers: () => {
+    return apiRequest('/admin/users', {
+      method: 'GET',
+      credentials: 'include'
+    })
+  },
+
+  extendPurchase: (userId, months) => {
+    return apiRequest(`/admin/users/${userId}/extend`, {
+      method: 'POST',
+      body: JSON.stringify({ months }),
+      credentials: 'include'
+    })
+  },
+
+  setUserActive: (userId, active) => {
+    return apiRequest(`/admin/users/${userId}/active`, {
+      method: 'POST',
+      body: JSON.stringify({ active }),
+      credentials: 'include'
+    })
+  },
+
+  listAnnouncements: () => {
+    return apiRequest('/admin/announcements', {
+      method: 'GET',
+      credentials: 'include'
+    })
+  },
+
+  deleteAnnouncement: (id) => {
+    return apiRequest(`/admin/announcement/${id}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    })
+  },
+
+  setPurchaseStatus: (userId, hasPurchased, expiresAt = null) => {
+    return apiRequest(`/admin/users/${userId}/purchase`, {
+      method: 'POST',
+      body: JSON.stringify({ hasPurchased, expiresAt }),
+      credentials: 'include'
+    })
   }
 }

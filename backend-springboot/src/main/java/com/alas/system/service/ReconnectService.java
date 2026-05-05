@@ -16,20 +16,24 @@ public class ReconnectService {
     private final String sshHostPrefix;
     private final String sshUser;
     private final String sshPassword;
+    private final int defaultServerIp;
 
     public ReconnectService(
             @Value("${app.network.ssh-host-prefix}") String sshHostPrefix,
             @Value("${app.network.ssh-user}") String sshUser,
-            @Value("${app.network.ssh-password}") String sshPassword
+            @Value("${app.network.ssh-password}") String sshPassword,
+            @Value("${app.network.default-server-ip}") int defaultServerIp
     ) {
         this.sshHostPrefix = sshHostPrefix;
         this.sshUser = sshUser;
         this.sshPassword = sshPassword;
+        this.defaultServerIp = defaultServerIp;
     }
 
     public Map<String, Object> reconnect(User user) {
         String containerName = "ws-scrcpy_" + user.getId();
-        String host = sshHostPrefix + user.getServerIp();
+        int serverIp = user.getServerIp() != null ? user.getServerIp() : defaultServerIp;
+        String host = sshHostPrefix + serverIp;
         String cmd = "docker restart " + containerName;
 
         ProcessBuilder pb = new ProcessBuilder(

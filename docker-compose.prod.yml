@@ -35,6 +35,10 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-true}
       - USER_JWT_SECRET=${USER_JWT_SECRET}
       - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET}
+      - DEFAULT_SERVER_IP=${DEFAULT_SERVER_IP}
+      - SSH_HOST_PREFIX=${SSH_HOST_PREFIX:-10.10.10.}
+      - SSH_USER=${SSH_USER:-root}
+      - SSH_PASSWORD=${SSH_PASSWORD}
     restart: always
 
   proxy-service:
@@ -46,6 +50,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - DATABASE_URL=${PROXY_DATABASE_URL}
+      - USER_JWT_SECRET=${USER_JWT_SECRET}
     restart: always
     depends_on:
       - auth-service

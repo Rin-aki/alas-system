@@ -2,14 +2,20 @@ package com.alas.system.service;
 
 import com.alas.system.domain.Announcement;
 import com.alas.system.domain.SystemStatus;
+import com.alas.system.domain.User;
 import com.alas.system.repository.AnnouncementRepository;
 import com.alas.system.repository.SystemStatusRepository;
+import com.alas.system.repository.UserRepository;
 import com.alas.system.security.JwtService;
 import io.jsonwebtoken.Claims;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -23,19 +29,22 @@ public class AdminService {
     private final JwtService jwtService;
     private final AnnouncementRepository announcementRepository;
     private final SystemStatusRepository systemStatusRepository;
+    private final UserRepository userRepository;
 
     public AdminService(
             @Value("${app.admin.username}") String adminUsername,
             @Value("${app.admin.password}") String adminPassword,
             JwtService jwtService,
             AnnouncementRepository announcementRepository,
-            SystemStatusRepository systemStatusRepository
+            SystemStatusRepository systemStatusRepository,
+            UserRepository userRepository
     ) {
         this.adminUsername = adminUsername;
         this.adminPassword = adminPassword;
         this.jwtService = jwtService;
         this.announcementRepository = announcementRepository;
         this.systemStatusRepository = systemStatusRepository;
+        this.userRepository = userRepository;
     }
 
     public String login(String username, String password) {
@@ -117,6 +126,97 @@ public class AdminService {
                 "message", "维护状态更新成功",
                 "is_maintenance", isMaintenance
         );
+    }
+
+    public List<Map<String, Object>> listUsers() {
+        return userRepository.findAll().stream()
+                .sorted(Comparator.comparing(User::getId))
+                .map(u -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", u.getId());
+                    m.put("email", u.getEmail());
+                    m.put("is_active", Boolean.TRUE.equals(u.getIsActive()));
+                    m.put("has_purchased", Boolean.TRUE.equals(u.getHasPurchased()));
+                    m.put("purchase_expires", u.getPurchaseExpires() == null ? null : u.getPurchaseExpires().toString());
+                    return m;
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public Map<String, Object> extendPurchase(int userId, int months) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime base = (user.getPurchaseExpires() != null && user.getPurchaseExpires().isAfter(now))
+                ? user.getPurchaseExpires() : now;
+
+        user.setPurchaseExpires(base.plusMonths(months));
+        user.setHasPurchased(true);
+        userRepository.save(user);
+
+        return Map.of(
+                "success", true,
+                "message", "到期时间已更新",
+                "purchase_expires", user.getPurchaseExpires().toString()
+        );
+    }
+
+    @Transactional
+    public Map<String, Object> setPurchaseStatus(int userId, boolean hasPurchased, String expiresAt) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+
+        user.setHasPurchased(hasPurchased);
+        if (expiresAt != null && !expiresAt.isBlank()) {
+            user.setPurchaseExpires(LocalDateTime.parse(expiresAt));
+        }
+        userRepository.save(user);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("has_purchased", user.getHasPurchased());
+        result.put("purchase_expires", user.getPurchaseExpires() == null ? null : user.getPurchaseExpires().toString());
+        return result;
+    }
+
+    @Transactional
+    public Map<String, Object> setUserActive(int userId, boolean active) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+
+        user.setIsActive(active);
+        userRepository.save(user);
+
+        return Map.of(
+                "success", true,
+                "message", active ? "用户已激活" : "用户已禁用",
+                "is_active", active
+        );
+    }
+
+    public List<Map<String, Object>> listAnnouncements() {
+        return announcementRepository.findAll().stream()
+                .sorted(Comparator.comparing(Announcement::getCreatedAt).reversed())
+                .map(a -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", a.getId());
+                    m.put("title", a.getTitle());
+                    m.put("created_at", a.getCreatedAt().toString());
+                    m.put("is_active", Boolean.TRUE.equals(a.getIsActive()));
+                    return m;
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public Map<String, Object> deleteAnnouncement(int id) {
+        if (!announcementRepository.existsById(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "公告不存在");
+        }
+        announcementRepository.deleteById(id);
+        return Map.of("success", true, "message", "公告已删除");
     }
 
     @Transactional

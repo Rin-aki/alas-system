@@ -47,7 +47,7 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-SECRET_KEY = "lpfH5a3h78"
+SECRET_KEY = os.getenv("USER_JWT_SECRET", "lpfH5a3h78")
 ALGORITHM = "HS256"
 
 def resolve_jwt_signing_key(secret: str) -> bytes:
@@ -516,12 +516,7 @@ async def proxy_ws(websocket: WebSocket, path: str):
         query_string = urlencode(filtered_query_params)
         target_ws_path = f"/{proxied_path}" if proxied_path else "/"
 
-        if service == "scrcpy":
-            use_bytes = True
-            target_ws_url = f"ws://10.10.10.{user_data['ws_ip']}:8000{target_ws_path}"
-            logger.info(f"代理到scrcpy: {target_ws_url}")
-        elif service == "alas":
-            use_bytes = False
+        if service == "alas":
             target_ws_url = f"ws://10.10.10.{user_data['alas_ip']}:22267{target_ws_path}"
             logger.info(f"代理到alas: {target_ws_url}")
         else:
@@ -548,12 +543,8 @@ async def proxy_ws(websocket: WebSocket, path: str):
             async def client_to_server():
                 try:
                     while True:
-                        if use_bytes:
-                            data = await websocket.receive_bytes()
-                            await remote_ws.send(data)
-                        else:
-                            msg = await websocket.receive_text()
-                            await remote_ws.send(msg)
+                        msg = await websocket.receive_text()
+                        await remote_ws.send(msg)
                 except Exception as e:
                     logger.debug(f"[client_to_server] 连接关闭: {e}")
 
@@ -561,10 +552,7 @@ async def proxy_ws(websocket: WebSocket, path: str):
                 try:
                     while True:
                         msg = await remote_ws.recv()
-                        if use_bytes:
-                            await websocket.send_bytes(cast(bytes, msg))
-                        else:
-                            await websocket.send_text(cast(str, msg))
+                        await websocket.send_text(cast(str, msg))
                 except Exception as e:
                     logger.debug(f"[server_to_client] 连接关闭: {e}")
 
@@ -651,12 +639,9 @@ async def proxy_http(path: str, request: Request):
             raise HTTPException(status_code=403, detail="服务已过期或未购买")
         
         host = request.headers.get("host", "")
-        service, proxied_path = split_service_path(path)
+        _, proxied_path = split_service_path(path)
         service = resolve_target_service(host, request=request, path=path)
-        if service == "scrcpy":
-            target_url = f"http://10.10.10.{user_data['ws_ip']}:8000/{proxied_path}"
-            target_host = f"10.10.10.{user_data['ws_ip']}:8000"
-        elif service == "alas":
+        if service == "alas":
             target_url = f"http://10.10.10.{user_data['alas_ip']}:22267/{proxied_path}"
             target_host = f"10.10.10.{user_data['alas_ip']}:22267"
         else:

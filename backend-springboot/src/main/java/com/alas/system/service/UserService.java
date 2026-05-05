@@ -22,11 +22,18 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordService passwordService;
     private final JwtService jwtService;
+    private final int defaultServerIp;
 
-    public UserService(UserRepository userRepository, PasswordService passwordService, JwtService jwtService) {
+    public UserService(
+            UserRepository userRepository,
+            PasswordService passwordService,
+            JwtService jwtService,
+            @org.springframework.beans.factory.annotation.Value("${app.network.default-server-ip}") int defaultServerIp
+    ) {
         this.userRepository = userRepository;
         this.passwordService = passwordService;
         this.jwtService = jwtService;
+        this.defaultServerIp = defaultServerIp;
     }
 
     @Transactional
@@ -44,6 +51,7 @@ public class UserService {
         user.setAlasIp(ips[0]);
         user.setBlhxIp(ips[1]);
         user.setWsIp(ips[2]);
+        user.setServerIp(defaultServerIp);
         User saved = userRepository.save(user);
 
         Map<String, Object> allocatedIps = new LinkedHashMap<>();

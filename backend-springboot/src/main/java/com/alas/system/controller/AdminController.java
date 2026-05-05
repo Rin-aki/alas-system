@@ -5,13 +5,16 @@ import com.alas.system.security.JwtService;
 import com.alas.system.service.AdminService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -81,6 +84,61 @@ public class AdminController {
         return adminService.updateMaintenance(request.isMaintenance(), request.maintenanceMessage());
     }
 
+    @GetMapping("/admin/users")
+    public List<Map<String, Object>> listUsers(
+            @CookieValue(value = "admin_token", required = false) String adminToken
+    ) {
+        mustAdmin(adminToken);
+        return adminService.listUsers();
+    }
+
+    @PostMapping("/admin/users/{id}/extend")
+    public Map<String, Object> extendPurchase(
+            @CookieValue(value = "admin_token", required = false) String adminToken,
+            @PathVariable int id,
+            @RequestBody ExtendPurchaseRequest request
+    ) {
+        mustAdmin(adminToken);
+        return adminService.extendPurchase(id, request.months());
+    }
+
+    @PostMapping("/admin/users/{id}/purchase")
+    public Map<String, Object> setPurchaseStatus(
+            @CookieValue(value = "admin_token", required = false) String adminToken,
+            @PathVariable int id,
+            @RequestBody PurchaseRequest request
+    ) {
+        mustAdmin(adminToken);
+        return adminService.setPurchaseStatus(id, request.hasPurchased(), request.expiresAt());
+    }
+
+    @PostMapping("/admin/users/{id}/active")
+    public Map<String, Object> setUserActive(
+            @CookieValue(value = "admin_token", required = false) String adminToken,
+            @PathVariable int id,
+            @RequestBody SetActiveRequest request
+    ) {
+        mustAdmin(adminToken);
+        return adminService.setUserActive(id, request.active());
+    }
+
+    @GetMapping("/admin/announcements")
+    public List<Map<String, Object>> listAnnouncements(
+            @CookieValue(value = "admin_token", required = false) String adminToken
+    ) {
+        mustAdmin(adminToken);
+        return adminService.listAnnouncements();
+    }
+
+    @DeleteMapping("/admin/announcement/{id}")
+    public Map<String, Object> deleteAnnouncement(
+            @CookieValue(value = "admin_token", required = false) String adminToken,
+            @PathVariable int id
+    ) {
+        mustAdmin(adminToken);
+        return adminService.deleteAnnouncement(id);
+    }
+
     private void mustAdmin(String adminToken) {
         if (!adminService.validateAdminToken(adminToken)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "需要管理员权限");
@@ -94,5 +152,14 @@ public class AdminController {
     }
 
     public record MaintenanceRequest(boolean isMaintenance, @NotBlank String maintenanceMessage) {
+    }
+
+    public record ExtendPurchaseRequest(int months) {
+    }
+
+    public record SetActiveRequest(boolean active) {
+    }
+
+    public record PurchaseRequest(boolean hasPurchased, String expiresAt) {
     }
 }

@@ -1,1 +1,14 @@
+# Build artifacts
 backend-springboot/target
+
+# Secrets — never commit real env files
+.env.prod
+.env.dev
+
+# Python
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Binaries
+backend/scrcpy-server.jar

@@ -1,0 +1,19 @@
+alasm.gjiang.xyz {
+
+    # ── Auth service（登录/注册/管理 API）──────────────────────────
+    @auth path /login /logout /register \
+               /auth/* /admin/* /purchase/* \
+               /reconnect /announcement/* /system/* /user/*
+    reverse_proxy @auth localhost:6200
+
+    # ── Fix WebSocket（仍在 Python 后端）────────────────────────────
+    @fix path /fix
+    reverse_proxy @fix localhost:6200
+
+    # ── Proxy service（设备控制 + ALAS 代理）────────────────────────
+    @proxy path /api/device/* /alas /alas/*
+    reverse_proxy @proxy localhost:6300
+
+    # ── 前端 Vue SPA（兜底）────────────────────────────────────────
+    reverse_proxy localhost:4173
+}
