@@ -9,9 +9,12 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 # 👇 关键：换源 + 强制 IPv4（双保险）
-RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list && \
-    sed -i 's|http://security.ubuntu.com/ubuntu|https://mirrors.aliyun.com/ubuntu|g' /etc/apt/sources.list && \
-    apt-get -o Acquire::ForceIPv4=true update && \
+RUN rm -f /etc/apt/sources.list.d/ubuntu.sources && \
+    echo "deb https://mirrors.aliyun.com/ubuntu noble main restricted universe multiverse" > /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/ubuntu noble-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/ubuntu noble-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/ubuntu noble-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+    apt-get update && \
     apt-get install -y sshpass && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
