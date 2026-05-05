@@ -54,14 +54,14 @@ def resolve_jwt_signing_key(secret: str) -> bytes:
     """Mirror the Spring Boot JwtService key derivation so tokens validate consistently."""
     try:
         decoded = base64.b64decode(secret, validate=True)
-        if len(decoded) >= 32:
+        if len(decoded) >= 48:
             return decoded
     except Exception:
         pass
 
     raw = secret.encode("utf-8")
-    key = bytearray(32)
-    for index in range(32):
+    key = bytearray(48)
+    for index in range(48):
         key[index] = raw[index % len(raw)]
     return bytes(key)
 
