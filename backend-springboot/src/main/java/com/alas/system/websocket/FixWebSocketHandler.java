@@ -89,8 +89,7 @@ public class FixWebSocketHandler extends TextWebSocketHandler {
 
         List<String> containers = List.of(
                 "blhx_" + userId,
-                "alas_" + userId,
-                "ws-scrcpy_" + userId
+                "alas_" + userId
         );
 
         try {
