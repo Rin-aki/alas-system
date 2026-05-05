@@ -10,5 +10,3 @@ backend/__pycache__/
 **/__pycache__/
 *.pyc
 
-# Binaries
-backend/scrcpy-server.jar
