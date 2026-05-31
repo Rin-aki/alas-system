@@ -22,4 +22,13 @@ public class ExpirationScheduler {
             log.info("Disabled {} expired purchases", changed);
         }
     }
+
+    // 每天凌晨 2 点检查并发送到期提醒邮件
+    @Scheduled(cron = "0 0 2 * * *", zone = "Asia/Shanghai")
+    public void sendExpiryNotificationsDaily() {
+        int sent = userService.sendExpiryNotifications();
+        if (sent > 0) {
+            log.info("Sent {} expiry notification emails", sent);
+        }
+    }
 }

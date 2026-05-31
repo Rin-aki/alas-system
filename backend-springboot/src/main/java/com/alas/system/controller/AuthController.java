@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -88,6 +89,16 @@ public class AuthController {
         return reconnectService.reconnect(mustUser(token));
     }
 
+    @GetMapping("/verify-email")
+    public Map<String, Object> verifyEmail(@RequestParam String token) {
+        return userService.verifyEmail(token);
+    }
+
+    @PostMapping("/resend-verification")
+    public Map<String, Object> resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
+        return userService.resendVerification(request.email());
+    }
+
     @GetMapping("/health")
     public Map<String, Object> health() {
         return Map.of(
@@ -108,5 +119,8 @@ public class AuthController {
     }
 
     public record PurchaseRequest(Integer days) {
+    }
+
+    public record ResendVerificationRequest(@Email @NotBlank String email) {
     }
 }

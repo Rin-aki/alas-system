@@ -4,6 +4,18 @@ server:
 spring:
   application:
     name: alas-auth-service
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
   datasource:
     url: ${DB_URL:jdbc:mysql://10.10.10.1:3306/DataBase?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
     username: ${DB_USER:guojiang}
@@ -36,6 +48,10 @@ app:
     default-server-ip: ${DEFAULT_SERVER_IP:227}
   cors:
     allowed-origin-patterns: ${CORS_ALLOWED_ORIGIN_PATTERNS:https://alasm.gjiang.xyz:58000,https://api.gjiang.xyz:58000,http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*,http://10.10.10.*:*,https://10.10.10.*:*}
+  email:
+    enabled: ${EMAIL_ENABLED:false}
+    from: ${EMAIL_FROM:noreply@alas.system}
+    frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:4173}
 
 logging:
   level:

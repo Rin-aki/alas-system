@@ -43,6 +43,18 @@ public class User {
     @Column(name = "server_ip")
     private Integer serverIp;
 
+    @Column(name = "email_verified")
+    private Boolean emailVerified;
+
+    @Column(name = "verification_token", length = 255)
+    private String verificationToken;
+
+    @Column(name = "verification_token_expires")
+    private LocalDateTime verificationTokenExpires;
+
+    @Column(name = "expiry_notification_sent")
+    private Boolean expiryNotificationSent;
+
     public Integer getId() {
         return id;
     }
@@ -121,5 +133,37 @@ public class User {
 
     public void setServerIp(Integer serverIp) {
         this.serverIp = serverIp;
+    }
+
+    public Boolean getEmailVerified() {
+        return emailVerified;
+    }
+
+    public void setEmailVerified(Boolean emailVerified) {
+        this.emailVerified = emailVerified;
+    }
+
+    public String getVerificationToken() {
+        return verificationToken;
+    }
+
+    public void setVerificationToken(String verificationToken) {
+        this.verificationToken = verificationToken;
+    }
+
+    public LocalDateTime getVerificationTokenExpires() {
+        return verificationTokenExpires;
+    }
+
+    public void setVerificationTokenExpires(LocalDateTime verificationTokenExpires) {
+        this.verificationTokenExpires = verificationTokenExpires;
+    }
+
+    public Boolean getExpiryNotificationSent() {
+        return expiryNotificationSent;
+    }
+
+    public void setExpiryNotificationSent(Boolean expiryNotificationSent) {
+        this.expiryNotificationSent = expiryNotificationSent;
     }
 }

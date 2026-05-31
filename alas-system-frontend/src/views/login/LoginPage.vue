@@ -38,15 +38,27 @@
            </router-link>
         </div>
 
-        <el-button 
-          type="primary" 
+        <el-button
+          type="primary"
           :loading="isLoading"
-          @click="submitForm" 
+          @click="submitForm"
           class="submit-btn"
           round
         >
           登 录
         </el-button>
+
+        <transition name="fade">
+          <el-button
+            v-if="showResend"
+            :loading="resending"
+            @click="resendVerification"
+            class="resend-btn"
+            round
+          >
+            重新发送验证邮件
+          </el-button>
+        </transition>
       </el-form>
     </div>
   </div>
@@ -60,11 +72,11 @@ import { Message, Lock } from '@element-plus/icons-vue'
 import { userService } from '../../services/api.js'
 
 const router = useRouter()
-// 表单数据对象
 const ruleForm = reactive({ email: "", password: "" })
-// 修复点3：定义唯一的表单引用变量
 const loginFormRef = ref(null)
 const isLoading = ref(false)
+const showResend = ref(false)
+const resending = ref(false)
 
 const rules = {
   email: [
@@ -125,6 +137,7 @@ const submitForm = async () => {
 
     if (response.status === 403) {
       ElMessage.warning(response.data.error || response.data.detail || '账户未激活')
+      showResend.value = true
       return
     }
 
@@ -134,6 +147,26 @@ const submitForm = async () => {
     ElMessage.error('网络连接异常或服务器错误')
   } finally {
     isLoading.value = false
+  }
+}
+
+const resendVerification = async () => {
+  if (!ruleForm.email) {
+    ElMessage.warning('请先填写邮箱')
+    return
+  }
+  resending.value = true
+  try {
+    const res = await userService.resendVerification(ruleForm.email)
+    if (res.ok) {
+      ElMessage.success(res.data?.msg || '验证邮件已发送，请查收')
+    } else {
+      ElMessage.error(res.data?.detail || res.data?.error || '发送失败，请稍后重试')
+    }
+  } catch {
+    ElMessage.error('网络错误，请稍后重试')
+  } finally {
+    resending.value = false
   }
 }
 </script>
@@ -214,5 +247,21 @@ const submitForm = async () => {
 .submit-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 5px 15px rgba(64, 158, 255, 0.4);
+}
+
+.resend-btn {
+  width: 100%;
+  margin-top: 10px;
+  font-size: 14px;
+  padding: 18px 0;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

@@ -185,6 +185,19 @@ export const userService = {
     })
   },
 
+  verifyEmail: (token) => {
+    return apiRequest(`/verify-email?token=${encodeURIComponent(token)}`, {
+      method: 'GET'
+    })
+  },
+
+  resendVerification: (email) => {
+    return apiRequest('/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    })
+  },
+
   getLatestAnnouncement: () => {
     return apiRequest('/announcement/latest', {
       method: 'GET',

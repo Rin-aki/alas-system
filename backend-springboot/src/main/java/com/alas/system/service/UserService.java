@@ -6,12 +6,14 @@ import com.alas.system.security.JwtService;
 import com.alas.system.security.PasswordService;
 import io.jsonwebtoken.Claims;
 import jakarta.transaction.Transactional;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -22,17 +24,20 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordService passwordService;
     private final JwtService jwtService;
+    private final EmailService emailService;
     private final int defaultServerIp;
 
     public UserService(
             UserRepository userRepository,
             PasswordService passwordService,
             JwtService jwtService,
+            EmailService emailService,
             @org.springframework.beans.factory.annotation.Value("${app.network.default-server-ip}") int defaultServerIp
     ) {
         this.userRepository = userRepository;
         this.passwordService = passwordService;
         this.jwtService = jwtService;
+        this.emailService = emailService;
         this.defaultServerIp = defaultServerIp;
     }
 
@@ -46,13 +51,25 @@ public class UserService {
         User user = new User();
         user.setEmail(email);
         user.setPasswordHash(passwordService.hashPassword(password));
-        user.setIsActive(true);
         user.setHasPurchased(false);
         user.setAlasIp(ips[0]);
         user.setBlhxIp(ips[1]);
         user.setWsIp(ips[2]);
         user.setServerIp(defaultServerIp);
-        User saved = userRepository.save(user);
+
+        if (emailService.isEnabled()) {
+            String token = UUID.randomUUID().toString();
+            user.setIsActive(false);
+            user.setEmailVerified(false);
+            user.setVerificationToken(token);
+            user.setVerificationTokenExpires(LocalDateTime.now().plusHours(24));
+            userRepository.save(user);
+            emailService.sendVerificationEmail(email, token);
+        } else {
+            user.setIsActive(true);
+            user.setEmailVerified(true);
+            userRepository.save(user);
+        }
 
         Map<String, Object> allocatedIps = new LinkedHashMap<>();
         allocatedIps.put("alas", "10.10.10." + ips[0]);
@@ -60,10 +77,47 @@ public class UserService {
         allocatedIps.put("ws", "10.10.10." + ips[2]);
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("msg", "注册成功");
-        response.put("user_id", saved.getId());
+        response.put("msg", emailService.isEnabled() ? "注册成功，请查收验证邮件激活账户" : "注册成功");
+        response.put("user_id", user.getId());
         response.put("allocated_ips", allocatedIps);
+        response.put("email_verification_required", emailService.isEnabled());
         return response;
+    }
+
+    @Transactional
+    public Map<String, Object> verifyEmail(String token) {
+        User user = userRepository.findByVerificationToken(token)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "验证链接无效或已失效"));
+
+        if (user.getVerificationTokenExpires() == null || LocalDateTime.now().isAfter(user.getVerificationTokenExpires())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "验证链接已过期，请重新发送验证邮件");
+        }
+
+        user.setIsActive(true);
+        user.setEmailVerified(true);
+        user.setVerificationToken(null);
+        user.setVerificationTokenExpires(null);
+        userRepository.save(user);
+
+        return Map.of("msg", "邮箱验证成功，账户已激活，请登录");
+    }
+
+    @Transactional
+    public Map<String, Object> resendVerification(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "邮箱不存在"));
+
+        if (Boolean.TRUE.equals(user.getIsActive())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "账户已激活，请直接登录");
+        }
+
+        String token = UUID.randomUUID().toString();
+        user.setVerificationToken(token);
+        user.setVerificationTokenExpires(LocalDateTime.now().plusHours(24));
+        userRepository.save(user);
+
+        emailService.sendVerificationEmail(email, token);
+        return Map.of("msg", "验证邮件已重新发送，请查收");
     }
 
     public LoginResult login(String email, String password) {
@@ -101,6 +155,7 @@ public class UserService {
     @Transactional
     public Map<String, Object> purchase(User currentUser, int days) {
         currentUser.setHasPurchased(true);
+        currentUser.setExpiryNotificationSent(false);
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime expires = currentUser.getPurchaseExpires();
         if (expires != null && expires.isAfter(now)) {
@@ -110,7 +165,7 @@ public class UserService {
         }
         userRepository.save(currentUser);
 
-        long remaining = java.time.Duration.between(now, currentUser.getPurchaseExpires()).toDays();
+        long remaining = Duration.between(now, currentUser.getPurchaseExpires()).toDays();
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("msg", "购买成功");
         response.put("has_purchased", true);
@@ -124,7 +179,7 @@ public class UserService {
         boolean purchaseExpired = checkAndDisableExpired(currentUser);
         long daysRemaining = 0;
         if (Boolean.TRUE.equals(currentUser.getHasPurchased()) && currentUser.getPurchaseExpires() != null) {
-            daysRemaining = java.time.Duration.between(LocalDateTime.now(), currentUser.getPurchaseExpires()).toDays();
+            daysRemaining = Duration.between(LocalDateTime.now(), currentUser.getPurchaseExpires()).toDays();
             if (daysRemaining < 0) {
                 daysRemaining = 0;
             }
@@ -181,6 +236,30 @@ public class UserService {
             }
         }
         return changed;
+    }
+
+    @Transactional
+    public int sendExpiryNotifications() {
+        if (!emailService.isEnabled()) {
+            return 0;
+        }
+        int sent = 0;
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime threshold = now.plusDays(3);
+        for (User user : userRepository.findAll()) {
+            if (Boolean.TRUE.equals(user.getHasPurchased())
+                    && user.getPurchaseExpires() != null
+                    && user.getPurchaseExpires().isAfter(now)
+                    && user.getPurchaseExpires().isBefore(threshold)
+                    && !Boolean.TRUE.equals(user.getExpiryNotificationSent())) {
+                long daysRemaining = Duration.between(now, user.getPurchaseExpires()).toDays();
+                emailService.sendExpiryNotification(user.getEmail(), daysRemaining, user.getPurchaseExpires());
+                user.setExpiryNotificationSent(true);
+                userRepository.save(user);
+                sent++;
+            }
+        }
+        return sent;
     }
 
     public Map<String, Object> authCheck(String token) {

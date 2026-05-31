@@ -7,11 +7,13 @@ import fixPage from '../views/fix/fixPage.vue'
 import DevicePage from '../views/device/DevicePage.vue'
 import AdminLogin from '../views/admin/AdminLogin.vue'
 import AdminPanel from '../views/admin/AdminPanel.vue'
+import VerifyEmail from '../views/verify-email/VerifyEmailPage.vue'
 import { userService, adminService } from '../services/api.js';
 const routes = [
   { path: '/login', name: 'LoginPage', component: Login, meta: { title: 'AlasMan - 登录', requiresAuth: false } },
   { path: '/', redirect: '/login' },
   { path: '/register', name: 'RegisterPage', component: Register, meta: { title: 'AlasMan - 注册', requiresAuth: false } },
+  { path: '/verify-email', name: 'VerifyEmail', component: VerifyEmail, meta: { title: 'AlasMan - 邮箱验证', requiresAuth: false } },
   { path: '/dashboard', name: 'Dashboard', component: Dashboard, meta: { title: 'AlasMan - 控制台', requiresAuth: true } },
   { path: '/fix', name: 'fixPage', component: fixPage, meta: { title: 'AlasMan - 疑难修复', requiresAuth: true } },
   { path: '/device', name: 'DevicePage', component: DevicePage, meta: { title: 'AlasMan - 设备控制', requiresAuth: true } },
