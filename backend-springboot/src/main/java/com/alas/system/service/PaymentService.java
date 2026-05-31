@@ -140,6 +140,17 @@ public class PaymentService {
                     .getObject()
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "无法解析 Stripe event"));
             fulfillOrder(session);
+        } else if ("checkout.session.expired".equals(event.getType())) {
+            event.getDataObjectDeserializer().getObject().ifPresent(obj -> {
+                Session session = (Session) obj;
+                orderRepository.findBySessionId(session.getId()).ifPresent(order -> {
+                    if ("pending".equals(order.getStatus())) {
+                        order.setStatus("expired");
+                        orderRepository.save(order);
+                        log.info("Stripe Session 已过期，订单标记为 expired: {}", session.getId());
+                    }
+                });
+            });
         }
     }
 
