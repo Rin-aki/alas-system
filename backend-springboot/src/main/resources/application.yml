@@ -62,18 +62,22 @@ stripe:
       days: 30
       amount: 3800
       label: "30天套餐"
+      price-id: ${STRIPE_PRICE_30D:price_placeholder_30d}
     - id: plan_90d
       days: 90
       amount: 11000
       label: "90天套餐"
+      price-id: ${STRIPE_PRICE_90D:price_placeholder_90d}
     - id: plan_180d
       days: 180
       amount: 21500
       label: "180天套餐"
+      price-id: ${STRIPE_PRICE_180D:price_placeholder_180d}
     - id: plan_365d
       days: 365
       amount: 41800
       label: "365天套餐"
+      price-id: ${STRIPE_PRICE_365D:price_placeholder_365d}
 
 logging:
   level:

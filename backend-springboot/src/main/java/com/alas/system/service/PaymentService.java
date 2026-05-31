@@ -20,24 +20,46 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@EnableConfigurationProperties(PaymentService.StripePlansProperties.class)
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
-    record Plan(String id, int days, long amount, String label) {}
+    // Bound from stripe.plans[] in application.yml
+    @ConfigurationProperties(prefix = "stripe")
+    public static class StripePlansProperties {
+        private List<PlanConfig> plans = List.of();
 
-    private static final List<Plan> PLANS = List.of(
-            new Plan("plan_30d",  30,  3800L,  "30天套餐"),
-            new Plan("plan_90d",  90,  11000L, "90天套餐"),
-            new Plan("plan_180d", 180, 21500L, "180天套餐"),
-            new Plan("plan_365d", 365, 41800L, "365天套餐")
-    );
+        public List<PlanConfig> getPlans() { return plans; }
+        public void setPlans(List<PlanConfig> plans) { this.plans = plans; }
+
+        public static class PlanConfig {
+            private String id;
+            private int days;
+            private long amount;
+            private String label;
+            private String priceId;
+
+            public String getId() { return id; }
+            public void setId(String id) { this.id = id; }
+            public int getDays() { return days; }
+            public void setDays(int days) { this.days = days; }
+            public long getAmount() { return amount; }
+            public void setAmount(long amount) { this.amount = amount; }
+            public String getLabel() { return label; }
+            public void setLabel(String label) { this.label = label; }
+            public String getPriceId() { return priceId; }
+            public void setPriceId(String priceId) { this.priceId = priceId; }
+        }
+    }
 
     @Value("${stripe.secret-key}")
     private String secretKey;
@@ -45,16 +67,19 @@ public class PaymentService {
     @Value("${stripe.webhook-secret}")
     private String webhookSecret;
 
-    // Frontend URL used to build success/cancel redirect URLs
     @Value("${app.frontend-url:https://alasm.gjiang.xyz:58000}")
     private String frontendUrl;
 
     private final StripeOrderRepository orderRepository;
     private final UserRepository userRepository;
+    private final StripePlansProperties plansProperties;
 
-    public PaymentService(StripeOrderRepository orderRepository, UserRepository userRepository) {
+    public PaymentService(StripeOrderRepository orderRepository,
+                          UserRepository userRepository,
+                          StripePlansProperties plansProperties) {
         this.orderRepository = orderRepository;
         this.userRepository = userRepository;
+        this.plansProperties = plansProperties;
     }
 
     @PostConstruct
@@ -63,43 +88,35 @@ public class PaymentService {
     }
 
     public List<Map<String, Object>> listPlans() {
-        return PLANS.stream().map(p -> {
+        return plansProperties.getPlans().stream().map(p -> {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", p.id());
-            m.put("days", p.days());
-            m.put("amount", p.amount());
-            m.put("label", p.label());
+            m.put("id", p.getId());
+            m.put("days", p.getDays());
+            m.put("amount", p.getAmount());
+            m.put("label", p.getLabel());
             return m;
         }).toList();
     }
 
     @Transactional
     public Map<String, Object> createCheckoutSession(User user, String planId) {
-        Plan plan = PLANS.stream()
-                .filter(p -> p.id().equals(planId))
+        StripePlansProperties.PlanConfig plan = plansProperties.getPlans().stream()
+                .filter(p -> p.getId().equals(planId))
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "无效的套餐ID"));
 
         try {
             SessionCreateParams params = SessionCreateParams.builder()
                     .setMode(SessionCreateParams.Mode.PAYMENT)
-                    .setCurrency("cny")
                     .addLineItem(SessionCreateParams.LineItem.builder()
                             .setQuantity(1L)
-                            .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
-                                    .setCurrency("cny")
-                                    .setUnitAmount(plan.amount())
-                                    .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                                            .setName(plan.label())
-                                            .setDescription("ALAS 服务 " + plan.days() + " 天使用权限")
-                                            .build())
-                                    .build())
+                            .setPrice(plan.getPriceId())
                             .build())
                     .setSuccessUrl(frontendUrl + "/checkout/success?session_id={CHECKOUT_SESSION_ID}")
                     .setCancelUrl(frontendUrl + "/checkout")
                     .putMetadata("user_id", user.getId().toString())
                     .putMetadata("plan_id", planId)
-                    .putMetadata("days", String.valueOf(plan.days()))
+                    .putMetadata("days", String.valueOf(plan.getDays()))
                     .build();
 
             Session session = Session.create(params);
@@ -108,8 +125,8 @@ public class PaymentService {
             order.setUserId(user.getId());
             order.setSessionId(session.getId());
             order.setPlanId(planId);
-            order.setDays(plan.days());
-            order.setAmount((int) plan.amount());
+            order.setDays(plan.getDays());
+            order.setAmount((int) plan.getAmount());
             order.setStatus("pending");
             order.setCreatedAt(LocalDateTime.now());
             orderRepository.save(order);
@@ -163,7 +180,7 @@ public class PaymentService {
 
         StripeOrder order = maybeOrder.get();
         if ("paid".equals(order.getStatus())) {
-            return; // 幂等：已处理过
+            return;
         }
 
         order.setStatus("paid");
@@ -185,7 +202,6 @@ public class PaymentService {
         });
     }
 
-    // Called by the success page to verify the session was actually paid
     public Map<String, Object> verifySession(User user, String sessionId) {
         Optional<StripeOrder> maybeOrder = orderRepository.findBySessionId(sessionId);
         if (maybeOrder.isEmpty() || !maybeOrder.get().getUserId().equals(user.getId())) {
