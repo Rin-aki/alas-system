@@ -46,12 +46,34 @@ app:
     ssh-user: ${SSH_USER:root}
     ssh-password: ${SSH_PASSWORD:lpfH5a3h78}
     default-server-ip: ${DEFAULT_SERVER_IP:227}
+  frontend-url: ${FRONTEND_URL:https://alasm.gjiang.xyz:58000}
   cors:
     allowed-origin-patterns: ${CORS_ALLOWED_ORIGIN_PATTERNS:https://alasm.gjiang.xyz:58000,https://api.gjiang.xyz:58000,http://localhost:*,https://localhost:*,http://127.0.0.1:*,https://127.0.0.1:*,http://10.10.10.*:*,https://10.10.10.*:*}
   email:
     enabled: ${EMAIL_ENABLED:false}
     from: ${EMAIL_FROM:noreply@alas.system}
     frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:4173}
+
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY:sk_test_placeholder}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_placeholder}
+  plans:
+    - id: plan_30d
+      days: 30
+      amount: 3800
+      label: "30天套餐"
+    - id: plan_90d
+      days: 90
+      amount: 11000
+      label: "90天套餐"
+    - id: plan_180d
+      days: 180
+      amount: 21500
+      label: "180天套餐"
+    - id: plan_365d
+      days: 365
+      amount: 41800
+      label: "365天套餐"
 
 logging:
   level:

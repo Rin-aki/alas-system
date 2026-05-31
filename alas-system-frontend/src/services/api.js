@@ -212,6 +212,28 @@ export const userService = {
     })
   },
 
+  getPaymentPlans: () => {
+    return apiRequest('/payment/plans', {
+      method: 'GET',
+      credentials: 'include'
+    })
+  },
+
+  createCheckoutSession: (planId) => {
+    return apiRequest('/payment/create-session', {
+      method: 'POST',
+      body: JSON.stringify({ planId }),
+      credentials: 'include'
+    })
+  },
+
+  verifyPayment: (sessionId) => {
+    return apiRequest(`/payment/verify?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'GET',
+      credentials: 'include'
+    })
+  },
+
   createAnnouncement: (announcementData) => {
     return apiRequest('/admin/announcement', {
       method: 'POST',

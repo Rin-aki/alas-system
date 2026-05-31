@@ -39,6 +39,9 @@ services:
       - SSH_HOST_PREFIX=${SSH_HOST_PREFIX:-10.10.10.}
       - SSH_USER=${SSH_USER:-root}
       - SSH_PASSWORD=${SSH_PASSWORD}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL}
     restart: always
 
   proxy-service:

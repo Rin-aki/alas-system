@@ -54,6 +54,9 @@
           </div>
           
           <div class="logout-btn-wrapper">
+            <el-button type="primary" round style="width: 100%; margin-bottom: 10px" @click="router.push('/checkout')" :icon="ShoppingCart">
+              {{ purchaseStatus.has_purchased ? '续费套餐' : '立即充值' }}
+            </el-button>
             <el-button type="danger" plain round style="width: 100%" @click="logout" :icon="SwitchButton">
               退出登录
             </el-button>
@@ -108,7 +111,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Monitor, Setting, Refresh, FirstAidKit, SwitchButton } from '@element-plus/icons-vue'
+import { Monitor, Setting, Refresh, FirstAidKit, SwitchButton, ShoppingCart } from '@element-plus/icons-vue'
 import { resolveRuntimeUrl, userService } from '../../services/api.js'
 
 const router = useRouter()

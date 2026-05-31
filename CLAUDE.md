@@ -72,6 +72,7 @@ journalctl -u alas-system.service -n 200 --no-pager
 - Announcements and maintenance mode (`SystemStatus` table, id=1 is the singleton row)
 - `/reconnect` HTTP endpoint — restarts only `ws-scrcpy_{user_id}` via SSH
 - **`/fix` WebSocket not yet migrated** — still served by `backend/auth_service.py`
+- **Stripe payment** — `GET /payment/plans`, `POST /payment/create-session`, `GET /payment/verify`, `POST /payment/webhook`; orders recorded in `stripe_order` table; webhook activates user purchase on `checkout.session.completed`
 
 **Proxy Service (Python, port 6300):**
 - Reverse proxy for HTTP and WebSocket traffic, routes to per-user IPs
@@ -81,7 +82,7 @@ journalctl -u alas-system.service -n 200 --no-pager
 - 15-minute in-process user cache to reduce DB queries; cache is cleared on expiry
 
 **Frontend (Vue 3, port 4173):**
-- Routes: `/login`, `/register`, `/dashboard`, `/fix`, `/admin-login`, `/admin`
+- Routes: `/login`, `/register`, `/dashboard`, `/fix`, `/device`, `/checkout`, `/checkout/success`, `/admin-login`, `/admin`
 - `router/index.js` global guard: user routes call `userService.isAuthenticated()` → `/auth/check`; admin routes call `adminService.isAuthenticated()` → `/admin/check`
 - All service URLs (`VITE_API_BASE_URL`, `VITE_WS_FIX_URL`, `VITE_SCRCPY_BASE_URL`, `VITE_ALAS_BASE_URL`) are injected at build time as Vite env vars — changing them requires a rebuild
 
@@ -89,10 +90,10 @@ journalctl -u alas-system.service -n 200 --no-pager
 
 ```
 backend-springboot/src/main/java/com/alas/system/
-├── controller/   AuthController.java, AdminController.java, ApiExceptionHandler.java
-├── service/      UserService.java, AdminService.java, ReconnectService.java, ExpirationScheduler.java
-├── repository/   UserRepository, AnnouncementRepository, SystemStatusRepository (Spring Data JPA)
-├── domain/       User, Announcement, SystemStatus
+├── controller/   AuthController.java, AdminController.java, PaymentController.java, ApiExceptionHandler.java
+├── service/      UserService.java, AdminService.java, ReconnectService.java, ExpirationScheduler.java, PaymentService.java
+├── repository/   UserRepository, AnnouncementRepository, SystemStatusRepository, StripeOrderRepository (Spring Data JPA)
+├── domain/       User, Announcement, SystemStatus, StripeOrder
 ├── security/     JwtService.java, CookieFactory.java, PasswordService.java
 └── config/       CorsConfig.java
 ```
@@ -115,6 +116,30 @@ backend-springboot/src/main/java/com/alas/system/
 | `COOKIE_DOMAIN`, `COOKIE_SECURE` | auth-service | Cookie scope |
 | `CORS_ALLOWED_ORIGIN_PATTERNS` | auth-service | CORS origins |
 | `VITE_API_BASE_URL`, `VITE_WS_FIX_URL`, `VITE_SCRCPY_BASE_URL`, `VITE_ALAS_BASE_URL` | frontend (build) | Baked-in API endpoints |
+| `STRIPE_SECRET_KEY` | auth-service | Stripe secret key (`sk_live_…` / `sk_test_…`) |
+| `STRIPE_WEBHOOK_SECRET` | auth-service | Stripe webhook signing secret (`whsec_…`) |
+| `FRONTEND_URL` | auth-service | Base URL for Stripe success/cancel redirects (e.g. `https://alasm.gjiang.xyz:58000`) |
+
+### Stripe Payment Flow
+
+1. User visits `/checkout`, selects a plan (30/90/180/365 天，CNY)
+2. Frontend calls `POST /payment/create-session` → backend creates a Stripe Checkout Session and returns its `url`
+3. Frontend redirects to Stripe-hosted payment page (`window.location.href = url`)
+4. On success Stripe redirects to `/checkout/success?session_id=…`; the page polls `GET /payment/verify` up to 5 times to wait for webhook delivery
+5. Stripe fires `checkout.session.completed` → `POST /payment/webhook`; `PaymentService.fulfillOrder()` marks the `StripeOrder` as `paid` and extends `user.purchase_expires`
+
+**Stripe plans** (defined in `PaymentService.PLANS`, amounts in fen):
+
+| Plan ID | Days | Amount |
+|---|---|---|
+| `plan_30d` | 30 | ¥38 |
+| `plan_90d` | 90 | ¥110 |
+| `plan_180d` | 180 | ¥215 |
+| `plan_365d` | 365 | ¥418 |
+
+**Database table:** `stripe_order` — must be created manually via `backend-springboot/src/main/resources/db/migration/V2__stripe_order.sql` (project uses `ddl-auto: none`).
+
+**Webhook registration:** in Stripe Dashboard, register `https://api.gjiang.xyz:58000/payment/webhook` for event `checkout.session.completed`.
 
 ### Timezone
 
