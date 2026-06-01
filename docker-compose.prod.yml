@@ -46,6 +46,13 @@ services:
       - STRIPE_PRICE_90D=${STRIPE_PRICE_90D}
       - STRIPE_PRICE_180D=${STRIPE_PRICE_180D}
       - STRIPE_PRICE_365D=${STRIPE_PRICE_365D}
+      - EMAIL_ENABLED=${EMAIL_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
     restart: always
 
   proxy-service:

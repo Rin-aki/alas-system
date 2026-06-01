@@ -12,7 +12,7 @@ ALAS System is a multi-tenant service management platform. It provides user auth
 - **Proxy Service** (`backend/proxy_service.py`) — Python/FastAPI, port 6300
 - **Frontend** (`alas-system-frontend/`) — Vue 3 (Composition API, `<script setup>`), Element Plus, Vite, port 4173
 
-The original Python auth service (`backend/auth_service.py`) is superseded by the Spring Boot service. The `/fix` WebSocket endpoint has **not yet been migrated** to Spring Boot — `backend/auth_service.py` still owns that endpoint.
+The original Python auth service (`backend/auth_service.py`) has been removed. All endpoints including the `/fix` WebSocket are now served by the Spring Boot service.
 
 ## Development Commands
 
@@ -71,7 +71,7 @@ journalctl -u alas-system.service -n 200 --no-pager
 - Purchase/subscription management; `ExpirationScheduler` runs hourly to auto-disable expired users
 - Announcements and maintenance mode (`SystemStatus` table, id=1 is the singleton row)
 - `/reconnect` HTTP endpoint — restarts only `ws-scrcpy_{user_id}` via SSH
-- **`/fix` WebSocket not yet migrated** — still served by `backend/auth_service.py`
+- `/fix` WebSocket — restarts user's `blhx_{id}` and `alas_{id}` containers via SSH, implemented in `FixWebSocketHandler.java`
 - **Stripe payment** — `GET /payment/plans`, `POST /payment/create-session`, `GET /payment/verify`, `POST /payment/webhook`; orders recorded in `stripe_order` table; webhook activates user purchase on `checkout.session.completed`
 
 **Proxy Service (Python, port 6300):**
