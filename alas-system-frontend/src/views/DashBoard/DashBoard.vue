@@ -136,7 +136,7 @@ const systemStatus = reactive({
 })
 
 const SCRCPY_BASE_URL = resolveRuntimeUrl(import.meta.env.VITE_SCRCPY_BASE_URL || 'http://localhost:6300/', { service: 'scrcpy' })
-const ALAS_BASE_URL = resolveRuntimeUrl(import.meta.env.VITE_ALAS_BASE_URL || 'http://localhost:6300/').replace(/\/?$/, '') + '/alas'
+const ALAS_BASE_URL = resolveRuntimeUrl(import.meta.env.VITE_ALAS_BASE_URL || 'http://localhost:6300/').replace(/\/?$/, '') + '/alas/'
 
 // 初始化逻辑 (保持原有逻辑不变，转为 Composition API 写法)
 const initUser = async () => {
