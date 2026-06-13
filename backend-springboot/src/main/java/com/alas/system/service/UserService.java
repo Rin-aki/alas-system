@@ -16,6 +16,8 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -64,7 +66,7 @@ public class UserService {
             user.setVerificationToken(token);
             user.setVerificationTokenExpires(LocalDateTime.now().plusHours(24));
             userRepository.save(user);
-            emailService.sendVerificationEmail(email, token);
+            sendVerificationEmailAfterCommit(email, token);
         } else {
             user.setIsActive(true);
             user.setEmailVerified(true);
@@ -116,7 +118,7 @@ public class UserService {
         user.setVerificationTokenExpires(LocalDateTime.now().plusHours(24));
         userRepository.save(user);
 
-        emailService.sendVerificationEmail(email, token);
+        sendVerificationEmailAfterCommit(email, token);
         return Map.of("msg", "验证邮件已重新发送，请查收");
     }
 
@@ -313,6 +315,20 @@ public class UserService {
             }
         }
         throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "可用IP不足，无法分配");
+    }
+
+    private void sendVerificationEmailAfterCommit(String email, String token) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            emailService.sendVerificationEmail(email, token);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                emailService.sendVerificationEmail(email, token);
+            }
+        });
     }
 
     public record LoginResult(String token, Map<String, Object> body) {

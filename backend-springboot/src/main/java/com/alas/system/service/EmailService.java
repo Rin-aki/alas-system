@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -32,6 +33,7 @@ public class EmailService {
         return enabled && mailSender != null;
     }
 
+    @Async
     public void sendVerificationEmail(String to, String token) {
         if (!isEnabled()) {
             log.warn("邮件功能未启用，跳过发送验证邮件至 {}", to);
@@ -42,6 +44,7 @@ public class EmailService {
         send(to, "【ALAS系统】请验证您的邮箱", html);
     }
 
+    @Async
     public void sendExpiryNotification(String to, long daysRemaining, LocalDateTime expiresAt) {
         if (!isEnabled()) {
             log.warn("邮件功能未启用，跳过发送到期提醒至 {}", to);
