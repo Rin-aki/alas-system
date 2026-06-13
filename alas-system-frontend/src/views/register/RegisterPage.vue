@@ -126,6 +126,13 @@ const rules = {
   ],
 }
 
+const getRegisterErrorMessage = (response) => {
+  return response?.data?.detail
+    || response?.data?.error
+    || response?.data?.message
+    || '注册失败，请稍后重试'
+}
+
 // 提交表单
 const submitForm = async () => {
   if (!registerFormRef.value) return
@@ -146,7 +153,7 @@ const submitForm = async () => {
             router.push('/login')
           }, 1500)
         } else {
-          ElMessage.error(response.data.error || '注册失败，请稍后重试')
+          ElMessage.error(getRegisterErrorMessage(response))
         }
       })
       .catch(error => {
